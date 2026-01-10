@@ -1,0 +1,118 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "deltadyno"
+version = "1.0.0"
+description = "Automated Breakout Detection Trading System"
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.9"
+authors = [
+    {name = "DeltaDyno Team"}
+]
+keywords = [
+    "trading",
+    "breakout",
+    "alpaca",
+    "options",
+    "algorithmic-trading",
+    "technical-analysis"
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Financial and Insurance Industry",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Office/Business :: Financial :: Investment",
+]
+dependencies = [
+    "numpy==1.26.4",
+    "pandas==1.5.3",
+    "pytz",
+    "alpaca-py",
+    "TA-Lib==0.4.32",
+    "mysql-connector-python",
+    "redis",
+    "aiohttp",
+    "openpyxl",
+    "watchdog",
+    "chardet",
+]
+
+[project.optional-dependencies]
+aws = ["boto3"]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-cov>=4.0.0",
+    "black>=23.0.0",
+    "isort>=5.12.0",
+    "mypy>=1.0.0",
+    "ruff>=0.0.270",
+]
+all = [
+    "deltadyno[aws]",
+    "deltadyno[dev]",
+]
+
+[project.scripts]
+deltadyno = "deltadyno.core.breakout_detector:main"
+
+[project.urls]
+Homepage = "https://github.com/yourusername/DeltaDyno"
+Documentation = "https://github.com/yourusername/DeltaDyno#readme"
+Repository = "https://github.com/yourusername/DeltaDyno.git"
+Issues = "https://github.com/yourusername/DeltaDyno/issues"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["deltadyno*"]
+
+[tool.black]
+line-length = 100
+target-version = ['py39', 'py310', 'py311', 'py312']
+include = '\.pyi?$'
+exclude = '''
+/(
+    \.eggs
+  | \.git
+  | \.hg
+  | \.mypy_cache
+  | \.tox
+  | \.venv
+  | _build
+  | buck-out
+  | build
+  | dist
+)/
+'''
+
+[tool.isort]
+profile = "black"
+line_length = 100
+known_first_party = ["deltadyno"]
+
+[tool.mypy]
+python_version = "3.9"
+warn_return_any = true
+warn_unused_configs = true
+ignore_missing_imports = true
+
+[tool.ruff]
+line-length = 100
+select = ["E", "F", "W", "I", "N", "D", "UP", "B", "C4"]
+ignore = ["D100", "D104", "D107"]
+target-version = "py39"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = "test_*.py"
+python_functions = "test_*"
+addopts = "-v --cov=deltadyno --cov-report=term-missing"
+

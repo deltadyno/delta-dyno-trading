@@ -1,0 +1,23 @@
+[Common]
+
+# Redis Configuration
+redis_stream_name_breakout_message = breakout_messages:v1
+redis_host = localhost
+redis_port = 6379
+redis_password = your_redis_password_here
+redis_username = your_redis_username_here
+
+# Retry Configuration
+max_retries = 3
+base_delay = 2
+
+# Database Configuration
+db_host = localhost
+db_user = your_db_user
+db_password = your_db_password
+db_name = deltadyno
+
+# Data Feed Configuration
+# Options: IEX (free tier, ~2.5% market volume) or SIP (premium, full market)
+data_feed = IEX
+
