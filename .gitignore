@@ -160,6 +160,9 @@ config/config.ini
 *.csv
 data/
 
+# Allow scripts/data/ directory (contains Python scripts, not data files)
+!scripts/data/
+
 # Secrets - NEVER commit these
 **/credentials.py
 **/secrets.py
