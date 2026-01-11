@@ -28,7 +28,14 @@ import mysql.connector
 from deltadyno.config.loader import ConfigLoader
 
 # Import from same directory
-from scripts.admin.configToDB import process_ini_data
+try:
+    from scripts.admin.configToDB import process_ini_data
+except ImportError:
+    # Fallback for direct execution
+    import sys
+    import os
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    from configToDB import process_ini_data
 
 
 # =============================================================================
