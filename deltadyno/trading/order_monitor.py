@@ -851,7 +851,7 @@ def run_order_monitor(
     #api_secret = get_ssm_parameter(f'profile{profile_id}_apisecret')
 
     # Get API credentials
-    api_key, api_secret = get_credentials("1")
+    api_key, api_secret = get_credentials(profile_id)
 
     # Ensure logs directory exists
     logs_dir = os.path.join(os.getcwd(), "logs")
