@@ -154,10 +154,17 @@ def create_profiles(
         print("Error: api_key and api_secret must each contain exactly 4 comma-separated values.")
         return
 
-    # Determine config file base directory
-    config_base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    if os.path.exists('/home/ec2-user/deltadynocode'):
+    # Determine config templates directory
+    # Try config/templates/ first (new structure), then fall back to base directory (legacy)
+    base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    templates_dir = os.path.join(base_dir, 'config', 'templates')
+    
+    if os.path.exists(templates_dir):
+        config_base_dir = templates_dir
+    elif os.path.exists('/home/ec2-user/deltadynocode'):
         config_base_dir = '/home/ec2-user/deltadynocode'
+    else:
+        config_base_dir = base_dir
 
     for i in range(4):
         config_file = config_files[i]
