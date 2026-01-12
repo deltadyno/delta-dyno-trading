@@ -51,21 +51,59 @@ def get_ssm_parameter(parameter_name: str, region: str = "us-east-1") -> str:
 # Credentials Management
 # =============================================================================
 
-# Credentials dictionary - in production, use secure storage (AWS SSM, environment variables, etc.)
-# NOTE: This is a placeholder. In production, use get_ssm_parameter() or environment variables.
-# For local development, create a credentials.py file in the config directory (gitignored).
-_credentials = {}
+# Cache for loaded credentials
+_credentials_cache = None
+
+
+def _load_credentials_from_file() -> dict:
+    """
+    Load credentials from config/credentials.py file (for local development).
+
+    This file is gitignored and should not be committed to version control.
+
+    Returns:
+        Dictionary of credentials, or empty dict if file doesn't exist
+    """
+    global _credentials_cache
+
+    # Return cached credentials if already loaded
+    if _credentials_cache is not None:
+        return _credentials_cache
+
+    try:
+        # Try to load from config/credentials.py
+        import sys
+        import os
+        config_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 'config')
+        credentials_path = os.path.join(config_dir, 'credentials.py')
+
+        if os.path.exists(credentials_path):
+            # Load credentials module
+            import importlib.util
+            spec = importlib.util.spec_from_file_location("credentials", credentials_path)
+            credentials_module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(credentials_module)
+            _credentials_cache = getattr(credentials_module, 'credentials', {})
+            return _credentials_cache
+        else:
+            _credentials_cache = {}
+            return _credentials_cache
+    except Exception:
+        # If loading fails, return empty dict
+        _credentials_cache = {}
+        return _credentials_cache
 
 
 def get_credentials(client_id: str) -> Tuple[str, str]:
     """
     Retrieve API credentials for a client.
 
-    This function first checks the _credentials dictionary, then falls back to
-    AWS SSM Parameter Store if credentials are not found locally.
+    This function checks in the following order:
+    1. Local credentials file (config/credentials.py) - for local development
+    2. AWS SSM Parameter Store - for production environments
 
     Args:
-        client_id: Client identifier
+        client_id: Client identifier (profile ID)
 
     Returns:
         Tuple of (api_key, api_secret)
@@ -74,18 +112,24 @@ def get_credentials(client_id: str) -> Tuple[str, str]:
         Exception: If credentials for the client are not found in either source
     """
     client_key = f"client_{client_id}"
-    
-    # Check local credentials dictionary first
-    if client_key in _credentials and _credentials[client_key]:
-        return _credentials[client_key]["api_key"], _credentials[client_key]["api_secret"]
-    
-    # Fall back to AWS SSM Parameter Store
+
+    # First, try loading from local credentials file (for local testing)
+    local_credentials = _load_credentials_from_file()
+    if client_key in local_credentials and local_credentials[client_key]:
+        creds = local_credentials[client_key]
+        return creds["api_key"], creds["api_secret"]
+
+    # Fall back to AWS SSM Parameter Store (for production)
     try:
         api_key = get_ssm_parameter(f'profile{client_id}_apikey')
         api_secret = get_ssm_parameter(f'profile{client_id}_apisecret')
         return api_key, api_secret
     except Exception as e:
-        raise Exception(f"Credentials for client {client_id} not found! Please configure either local credentials or AWS SSM parameters. Error: {e}")
+        raise Exception(
+            f"Credentials for client {client_id} not found! "
+            f"Please configure either config/credentials.py (for local testing) or AWS SSM parameters (for production). "
+            f"Error: {e}"
+        )
 
 
 def get_ssm_parameter(parameter_name: str, region: str = "us-east-1") -> str:
