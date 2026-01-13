@@ -35,8 +35,8 @@ class TelemetryManager:
     def __init__(
         self,
         storage: TelemetryStorage,
-        batch_size: int = 10,
-        flush_interval_seconds: float = 5.0,
+        batch_size: int = 50,  # Increased from 10 for better throughput
+        flush_interval_seconds: float = 10.0,  # Increased from 5.0 for better batching
         enabled: bool = True
     ):
         """
@@ -44,8 +44,8 @@ class TelemetryManager:
         
         Args:
             storage: TelemetryStorage instance
-            batch_size: Number of metrics to batch before writing
-            flush_interval_seconds: Maximum time between writes
+            batch_size: Number of metrics to batch before writing (default: 50 for high throughput)
+            flush_interval_seconds: Maximum time between writes (default: 10.0 seconds)
             enabled: Whether telemetry collection is enabled
         """
         self.storage = storage
@@ -96,22 +96,61 @@ class TelemetryManager:
         thread.start()
     
     def _flush_batch(self, batch: list) -> None:
-        """Flush a batch of metrics to storage."""
+        """
+        Flush a batch of metrics to storage using bulk operations.
+        
+        Groups items by type and uses bulk inserts for better performance.
+        """
+        if not batch:
+            return
+        
+        # Group items by type for bulk operations
+        trades = []
+        metrics = []
+        equity_updates = []
+        health_updates = []
+        
         for item in batch:
             try:
                 item_type, data = item
                 
                 if item_type == "trade_performance":
-                    self.storage.store_trade_performance(data)
+                    trades.append(data)
                 elif item_type == "equity_realtime":
-                    self.storage.store_realtime_equity(data)
+                    equity_updates.append(data)
                 elif item_type == "system_health":
-                    self.storage.store_system_health(data)
+                    health_updates.append(data)
                 elif item_type == "aggregated_metric":
-                    self.storage.store_aggregated_metric(**data)
+                    metrics.append(data)
                     
             except Exception as e:
-                print(f"Error flushing telemetry batch item: {e}")
+                print(f"Error processing telemetry batch item: {e}")
+        
+        # Bulk operations (much faster than individual inserts)
+        try:
+            if trades:
+                self.storage.store_trade_performance_bulk(trades)
+        except Exception as e:
+            print(f"Error flushing trade performance batch: {e}")
+        
+        try:
+            if metrics:
+                self.storage.store_aggregated_metric_bulk(metrics)
+        except Exception as e:
+            print(f"Error flushing metrics batch: {e}")
+        
+        # Real-time updates (Redis) - keep individual for low latency
+        for equity in equity_updates:
+            try:
+                self.storage.store_realtime_equity(equity)
+            except Exception as e:
+                print(f"Error storing equity update: {e}")
+        
+        for health in health_updates:
+            try:
+                self.storage.store_system_health(health)
+            except Exception as e:
+                print(f"Error storing system health: {e}")
     
     # =========================================================================
     # Breakout Metrics

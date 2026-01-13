@@ -30,7 +30,7 @@ def get_telemetry_manager() -> TelemetryManager:
         
         config = ConfigLoader(config_file=config_path)
         
-        # Create storage
+        # Create storage with connection pooling (optimized for 100s of profiles)
         storage = TelemetryStorage(
             db_host=config.db_host,
             db_user=config.db_user,
@@ -38,11 +38,18 @@ def get_telemetry_manager() -> TelemetryManager:
             db_name=config.db_name,
             redis_host=config.redis_host,
             redis_port=config.redis_port,
-            redis_password=config.redis_password
+            redis_password=config.redis_password,
+            mysql_pool_size=50,  # Connection pool size for MySQL
+            redis_pool_size=100  # Connection pool size for Redis
         )
         
-        # Create manager
-        _telemetry_manager = TelemetryManager(storage=storage, enabled=True)
+        # Create manager with optimized batch sizes for high throughput
+        _telemetry_manager = TelemetryManager(
+            storage=storage,
+            enabled=True,
+            batch_size=50,  # Increased for better throughput
+            flush_interval_seconds=10.0  # Increased for better batching
+        )
     
     return _telemetry_manager
 
