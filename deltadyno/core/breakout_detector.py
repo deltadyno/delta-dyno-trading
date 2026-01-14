@@ -205,22 +205,8 @@ def fetch_data(
             logger.error(f"Failed to parse end_date: {end_date_str}. Error: {e}")
             return _create_error_response(config)
 
-        # Adjust end_date if it's too recent
-        # For SIP feed, require at least 15 minutes delay; for IEX, use timeframe_minutes
+        # No time restriction for IEX feed (free tier)
         current_utc_time = datetime.now(pytz.UTC)
-        data_feed = file_config.data_feed or "IEX"
-        
-        if data_feed.upper() == "SIP":
-            min_data_age = timedelta(minutes=15)  # SIP requires 15 min delay
-        else:
-            min_data_age = timedelta(minutes=timeframe_minutes)  # IEX can use shorter delay
-        
-        if end_date > current_utc_time - min_data_age:
-            end_date = current_utc_time - min_data_age
-            logger.debug(
-                f"Adjusted end_date to {end_date} (minimum {min_data_age.total_seconds()/60} minutes "
-                f"in past required for {data_feed} feed)"
-            )
 
         # Fetch historical data
         df, end_of_history_data = fetch_daily_historicaldata(
@@ -361,22 +347,39 @@ def handle_positions(
                 logger.info("End of data reached. Real-time data mode is off. EXIT!")
                 break
 
-            # Determine current date from data
-            current_date = _get_current_date(df)
+            # First check: Determine current date from data (even if empty)
+            # This must happen BEFORE date change logic
+            if df.empty:
+                current_date = datetime.now(timezone.utc).date()
+            else:
+                state["latest_close_time"] = df["time"].iloc[-1]
+                current_date = state["latest_close_time"].date()
+            
             logger.debug(f"current_date: {current_date}")
 
-            # Handle date change logic
+            # Handle date change logic (must happen even if df is empty)
             if state["previous_date"] != current_date:
                 state = _handle_date_change(
                     state, current_date, config, trading_client, logger
                 )
 
-            # Handle empty data
+            # Second check: Handle empty data (after date determination and date change logic)
             if df.empty:
-                _handle_empty_data(
-                    config, end_time, state["latest_close_time"],
-                    timeframe_minutes, trading_client, state["market_hours"], logger
+                # Determine sleep time
+                no_data_fetch_sleep_time = sleep_determination_extended(
+                    config,
+                    end_time - timedelta(minutes=config.get("min_data_age_threshold", 0, int)),
+                    state["latest_close_time"],
+                    timeframe_minutes,
+                    trading_client,
+                    state["market_hours"],
+                    config.get("live_extra_sleep_seconds", 0.25, float),
+                    logger
                 )
+                
+                print(f"No data fetched. Retrying in {no_data_fetch_sleep_time} seconds.")
+                logger.warning(f"No data fetched. Retrying in {no_data_fetch_sleep_time} seconds.")
+                time.sleep(no_data_fetch_sleep_time)
                 continue
 
             logger.info("Data fetched:\n" + str(df.tail()))
