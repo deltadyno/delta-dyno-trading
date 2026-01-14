@@ -350,7 +350,7 @@ def handle_positions(
             # First check: Determine current date from data (even if empty)
             # This must happen BEFORE date change logic
             if df.empty:
-                current_date = datetime.now(timezone.utc).date()
+                current_date = datetime.now(pytz.UTC).date()
             else:
                 state["latest_close_time"] = df["time"].iloc[-1]
                 current_date = state["latest_close_time"].date()
@@ -637,7 +637,7 @@ def _initialize_tracking_state(config) -> dict:
 def _get_current_date(df: pd.DataFrame) -> datetime.date:
     """Extract current date from dataframe or use current UTC date."""
     if df.empty:
-        return datetime.now(timezone.utc).date()
+        return datetime.now(pytz.UTC).date()
     return df["time"].iloc[-1].date()
 
 
