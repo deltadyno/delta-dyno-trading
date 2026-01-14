@@ -251,16 +251,6 @@ def sleep_determination_extended(
     """
     previous_day_hours = None
 
-    # Print all the method arguments
-    print(f"config: {config}")
-    print(f"current_time: {current_time}")
-    print(f"latest_close_time: {latest_close_time}")
-    print(f"timeframe_minutes: {timeframe_minutes}")
-    print(f"trading_client: {trading_client}")
-    print(f"market_hours: {market_hours}")
-    print(f"live_extra_sleep_seconds: {live_extra_sleep_seconds}")
-    print(f"logger: {logger}")
-    
     # Handle case where we're before market hours or market_hours is None
     if market_hours is None or current_time < market_hours["pre_market_open"]:
         previous_day = (datetime.now(timezone.utc) - timedelta(days=1)).date()
@@ -306,7 +296,7 @@ def sleep_determination_extended(
     # Calculate next candle time
     next_candle_time = None
     if latest_close_time is not None:
-        next_candle_time = latest_close_time + (2 * timedelta(minutes=timeframe_minutes))
+        next_candle_time = latest_close_time + timedelta(minutes=timeframe_minutes)
     logger.debug(f"next_candle_time: {next_candle_time}")
 
     # Determine sleep duration based on market status
