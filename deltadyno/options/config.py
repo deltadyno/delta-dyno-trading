@@ -3,13 +3,16 @@ Option Stream Configuration.
 
 Loads option streaming specific configuration from config.ini,
 integrating with the existing DeltaDyno configuration system.
+
+Uses the shared [Common] section for database and Redis settings,
+and the [options] section for option-specific settings.
 """
 
-import configparser
 import logging
 from datetime import datetime, timedelta
-from pathlib import Path
 from typing import List, Optional
+
+from deltadyno.config.loader import ConfigLoader
 
 logger = logging.getLogger(__name__)
 
@@ -18,8 +21,8 @@ class OptionStreamConfig:
     """
     Configuration container for option streaming parameters.
     
-    Loads configuration from config.ini and provides typed access
-    to all option streaming settings.
+    Extends the base ConfigLoader to add option-specific settings
+    while reusing shared database and Redis configuration.
     """
     
     def __init__(self, config_file: str = "config/config.ini"):
@@ -29,102 +32,94 @@ class OptionStreamConfig:
         Args:
             config_file: Path to the configuration file
         """
-        self._config = configparser.ConfigParser()
-        self._config_path = self._resolve_config_path(config_file)
-        self._load_config()
-        self._parse_settings()
+        # Load base configuration (database, redis, etc.)
+        self._base_config = ConfigLoader(config_file=config_file)
+        self._parse_option_settings()
     
-    def _resolve_config_path(self, config_file: str) -> Path:
-        """Resolve the config file path, checking multiple locations."""
-        # Try the provided path first
-        path = Path(config_file)
-        if path.exists():
-            return path
+    def _parse_option_settings(self) -> None:
+        """Parse option-specific configuration settings."""
+        config = self._base_config.config
         
-        # Try relative to current working directory
-        cwd_path = Path.cwd() / config_file
-        if cwd_path.exists():
-            return cwd_path
-        
-        # Try the base config.ini in root (for backward compatibility)
-        root_config = Path.cwd() / "config.ini"
-        if root_config.exists():
-            return root_config
-        
-        # Fall back to the original path (will fail gracefully)
-        logger.warning(f"Config file not found at {config_file}, using defaults")
-        return path
-    
-    def _load_config(self) -> None:
-        """Load the configuration file."""
-        if self._config_path.exists():
-            self._config.read(str(self._config_path))
-            logger.info(f"Loaded option stream config from {self._config_path}")
-        else:
-            logger.warning(f"Config file not found: {self._config_path}")
-    
-    def _parse_settings(self) -> None:
-        """Parse all configuration settings."""
-        # Date range settings
-        self.days_forward: int = self._get_int("dates", "days_forward", 365)
+        # Date range settings (from [options] section)
+        self.days_forward: int = config.getint("options", "days_forward", fallback=365)
         self.start_date: datetime.date = datetime.now().date()
         self.end_date: str = (self.start_date + timedelta(days=self.days_forward)).strftime('%Y-%m-%d')
         
         # Options settings
-        self.premium_threshold: int = self._get_int("options", "premium_threshold", 500)
+        self.premium_threshold: int = config.getint("options", "premium_threshold", fallback=500)
         self.tickers: List[str] = self._get_list("options", "tickers", ["SPY", "TSLA"])
-        self.tweet_interval_minutes: int = self._get_int("options", "tweet_interval_minutes", 5)
-        
-        # Database settings
-        self.db_host: str = self._get_str("database", "host", "localhost")
-        self.db_port: int = self._get_int("database", "port", 3306)
-        self.db_user: str = self._get_str("database", "user", "root")
-        self.db_password: str = self._get_str("database", "password", "")
-        self.db_name: str = self._get_str("database", "database", "deltadyno")
-        self.db_table_name: str = self._get_str("database", "table_name", "dd_trade_stream")
-        
-        # Redis settings
-        self.redis_host: str = self._get_str("redis", "redis_host", "localhost")
-        self.redis_port: int = self._get_int("redis", "redis_port", 6379)
-        self.redis_password: str = self._get_str("redis", "redis_password", "")
-        self.redis_stream_queue_name: str = self._get_str("redis", "stream_queue_name", "options_flow:v1")
+        self.tweet_interval_minutes: int = config.getint("options", "tweet_interval_minutes", fallback=5)
         
         # Batch processing settings
-        self.db_batch_size: int = self._get_int("options", "db_batch_size", 20)
-        self.db_batch_interval_seconds: float = self._get_float("options", "db_batch_interval_seconds", 2.0)
+        self.db_batch_size: int = config.getint("options", "db_batch_size", fallback=20)
+        self.db_batch_interval_seconds: float = config.getfloat("options", "db_batch_interval_seconds", fallback=2.0)
         
         logger.debug(f"Option stream config: tickers={self.tickers}, premium_threshold={self.premium_threshold}")
-    
-    def _get_str(self, section: str, key: str, default: str = "") -> str:
-        """Get a string configuration value."""
-        try:
-            return self._config.get(section, key)
-        except (configparser.NoSectionError, configparser.NoOptionError):
-            return default
-    
-    def _get_int(self, section: str, key: str, default: int = 0) -> int:
-        """Get an integer configuration value."""
-        try:
-            return self._config.getint(section, key)
-        except (configparser.NoSectionError, configparser.NoOptionError, ValueError):
-            return default
-    
-    def _get_float(self, section: str, key: str, default: float = 0.0) -> float:
-        """Get a float configuration value."""
-        try:
-            return self._config.getfloat(section, key)
-        except (configparser.NoSectionError, configparser.NoOptionError, ValueError):
-            return default
     
     def _get_list(self, section: str, key: str, default: List[str] = None) -> List[str]:
         """Get a comma-separated list configuration value."""
         if default is None:
             default = []
         try:
-            value = self._config.get(section, key)
+            value = self._base_config.config.get(section, key)
             return [item.strip() for item in value.split(",") if item.strip()]
-        except (configparser.NoSectionError, configparser.NoOptionError):
+        except Exception:
             return default
+    
+    # ==========================================================================
+    # Shared Configuration Properties (from [Common] section)
+    # ==========================================================================
+    
+    @property
+    def db_host(self) -> str:
+        """Database hostname."""
+        return self._base_config.db_host or "localhost"
+    
+    @property
+    def db_port(self) -> int:
+        """Database port."""
+        return self._base_config.db_port or 3306
+    
+    @property
+    def db_user(self) -> str:
+        """Database username."""
+        return self._base_config.db_user or "root"
+    
+    @property
+    def db_password(self) -> str:
+        """Database password."""
+        return self._base_config.db_password or ""
+    
+    @property
+    def db_name(self) -> str:
+        """Database name."""
+        return self._base_config.db_name or "deltadyno"
+    
+    @property
+    def db_table_name(self) -> str:
+        """Trade stream table name."""
+        return self._base_config.db_table_trade_stream or "dd_trade_stream"
+    
+    @property
+    def redis_host(self) -> str:
+        """Redis hostname."""
+        return self._base_config.redis_host or "localhost"
+    
+    @property
+    def redis_port(self) -> int:
+        """Redis port."""
+        port = self._base_config.redis_port
+        return int(port) if port else 6379
+    
+    @property
+    def redis_password(self) -> str:
+        """Redis password."""
+        return self._base_config.redis_password or ""
+    
+    @property
+    def redis_stream_queue_name(self) -> str:
+        """Redis stream name for options flow."""
+        return self._base_config.redis_stream_name_options_flow or "options_flow:v1"
     
     @property
     def db_connection_string(self) -> str:
@@ -133,7 +128,6 @@ class OptionStreamConfig:
     
     def reload(self) -> None:
         """Reload configuration from disk."""
-        self._load_config()
-        self._parse_settings()
+        self._base_config = ConfigLoader(config_file=self._base_config.config_file)
+        self._parse_option_settings()
         logger.info("Option stream configuration reloaded")
-
