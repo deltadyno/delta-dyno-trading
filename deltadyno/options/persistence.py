@@ -73,7 +73,7 @@ def get_db_engine(config=None) -> Engine:
         
         # Create table if it doesn't exist
         _metadata.create_all(_engine)
-        logger.info(f"Database engine initialized for table: {config.db_table_name}")
+        logger.debug(f"Database engine initialized for table: {config.db_table_name}")
     
     return _engine
 
@@ -112,7 +112,7 @@ def insert_trade(trade_data: Dict[str, Any]) -> bool:
         with engine.connect() as conn:
             conn.execute(table.insert().values(**trade_data))
             conn.commit()
-            logger.info(f"Inserted trade into DB: {trade_data.get('Symbol')}")
+            logger.debug(f"Inserted trade into DB: {trade_data.get('Symbol')}")
             return True
     except SQLAlchemyError as e:
         logger.error(f"DB insert error: {str(e)}", exc_info=True)
@@ -142,7 +142,7 @@ def insert_trades_batch(trades: List[Dict[str, Any]]) -> bool:
         with engine.begin() as conn:
             conn.execute(table.insert(), trades)
         
-        logger.info(f"Batch inserted {len(trades)} trades into DB")
+        logger.debug(f"Batch inserted {len(trades)} trades into DB")
         return True
     except SQLAlchemyError as e:
         logger.error(f"Batch insert error: {str(e)}", exc_info=True)
@@ -160,5 +160,4 @@ def initialize_persistence(config=None) -> None:
         config: Optional OptionStreamConfig instance
     """
     engine = get_db_engine(config)
-    logger.info(f"Persistence layer initialized: {engine.url.database}")
-
+    logger.debug(f"Persistence layer initialized: {engine.url.database}")

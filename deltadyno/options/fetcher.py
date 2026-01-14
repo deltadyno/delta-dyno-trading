@@ -39,8 +39,7 @@ def fetch_options_for_symbols(
         List of OCC option symbols
     """
     try:
-        print("Initializing OptionHistoricalDataClient...")
-        logger.info("Initializing OptionHistoricalDataClient...")
+        logger.debug("Initializing OptionHistoricalDataClient...")
         
         option_client = OptionHistoricalDataClient(api_key, api_secret)
         all_symbols: List[str] = []
@@ -61,8 +60,7 @@ def fetch_options_for_symbols(
                 continue
         
         unique_count = len(set(all_symbols))
-        print(f"Total unique option symbols fetched: {unique_count}")
-        logger.info(f"Total unique option symbols fetched: {unique_count}")
+        logger.info(f"Total option symbols fetched: {unique_count}")
         
         return all_symbols
         
@@ -90,7 +88,6 @@ def _fetch_options_for_single_symbol(
         List of OCC option symbols for this ticker
     """
     logger.info(f"Fetching option chain for {symbol}...")
-    print(f"Fetching option chain for {symbol}...")
     
     # Build request parameters
     request_params = {
@@ -107,8 +104,6 @@ def _fetch_options_for_single_symbol(
     current_symbols = list(option_chain.keys())
     symbol_count = len(current_symbols)
     
-    print(f"Fetched {symbol_count} option symbols for {symbol}.")
-    logger.debug(f"Fetched {symbol_count} option symbols for {symbol}.")
+    logger.debug(f"Fetched {symbol_count} option symbols for {symbol}")
     
     return current_symbols
-

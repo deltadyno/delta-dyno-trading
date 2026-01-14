@@ -32,13 +32,11 @@ def subscribe_to_trades(
     """
     try:
         symbol_count = len(option_symbols)
-        print(f"Subscribing to trades for {symbol_count} option symbols...")
         logger.info(f"Subscribing to trades for {symbol_count} option symbols...")
         
         for ticker in option_symbols:
             option_stream.subscribe_trades(handler, ticker)
         
-        print("Subscription to all symbols completed.")
         logger.info("Subscription to all symbols completed.")
         return True
         
@@ -74,4 +72,3 @@ def unsubscribe_from_trades(
     except Exception as e:
         logger.error(f"Error during trade unsubscription: {e}")
         return False
-

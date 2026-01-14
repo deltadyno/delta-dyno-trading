@@ -42,17 +42,24 @@ from deltadyno.options import (
 )
 from deltadyno.utils.helpers import get_credentials
 
+# Module logger
+logger = logging.getLogger(__name__)
+
 
 # =============================================================================
 # Logging Setup
 # =============================================================================
 
-def setup_logging(log_file: str = "logs/option_stream.log") -> logging.Logger:
+def setup_logging(log_file: str = "logs/option_stream.log", console_level: int = logging.INFO) -> logging.Logger:
     """
     Configure logging with rotating file handler.
     
+    - File handler: DEBUG level (all logs go to file)
+    - Console handler: INFO level (only important logs to terminal)
+    
     Args:
         log_file: Path to the log file
+        console_level: Minimum log level for console output
     
     Returns:
         Configured logger instance
@@ -62,28 +69,34 @@ def setup_logging(log_file: str = "logs/option_stream.log") -> logging.Logger:
     if log_dir:
         os.makedirs(log_dir, exist_ok=True)
     
-    # Set up rotating log file handler
-    log_handler = RotatingFileHandler(
+    # Log format
+    formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+    
+    # File handler - captures DEBUG and above
+    file_handler = RotatingFileHandler(
         log_file,
         maxBytes=5 * 1024 * 1024,  # 5 MB
         backupCount=3
     )
+    file_handler.setLevel(logging.DEBUG)
+    file_handler.setFormatter(formatter)
     
-    # Log format
-    formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
-    log_handler.setFormatter(formatter)
-    
-    # Also log to console
+    # Console handler - captures INFO and above (less verbose)
     console_handler = logging.StreamHandler()
+    console_handler.setLevel(console_level)
     console_handler.setFormatter(formatter)
     
     # Configure root logger
-    logger = logging.getLogger()
-    logger.setLevel(logging.DEBUG)
-    logger.addHandler(log_handler)
-    logger.addHandler(console_handler)
+    root_logger = logging.getLogger()
+    root_logger.setLevel(logging.DEBUG)  # Allow all levels, handlers will filter
     
-    return logger
+    # Clear existing handlers to avoid duplicates
+    root_logger.handlers.clear()
+    
+    root_logger.addHandler(file_handler)
+    root_logger.addHandler(console_handler)
+    
+    return root_logger
 
 
 # =============================================================================
@@ -104,7 +117,7 @@ def db_batch_writer(config: OptionStreamConfig) -> None:
     interval = config.db_batch_interval_seconds
     trade_buffer = get_trade_buffer()
     
-    logging.info(f"DB batch writer started: batch_size={batch_size}, interval={interval}s")
+    logger.debug(f"DB batch writer started: batch_size={batch_size}, interval={interval}s")
     
     while True:
         try:
@@ -117,13 +130,13 @@ def db_batch_writer(config: OptionStreamConfig) -> None:
             # Insert batch if we have trades
             if batch:
                 insert_trades_batch(batch)
-                logging.debug(f"Batch inserted {len(batch)} trades")
+                logger.debug(f"Batch inserted {len(batch)} trades")
             
             # Sleep before next batch
             time.sleep(interval)
             
         except Exception as e:
-            logging.error(f"Error in DB batch writer: {e}")
+            logger.error(f"Error in DB batch writer: {e}")
             time.sleep(interval)
 
 
@@ -141,8 +154,7 @@ def initialize_redis_client(config: OptionStreamConfig) -> Redis:
     Returns:
         Configured Redis client instance
     """
-    print("Initializing Redis Client...")
-    logging.info("Initializing Redis Client...")
+    logger.info("Initializing Redis Client...")
     
     client = Redis(
         host=config.redis_host,
@@ -167,10 +179,11 @@ def main(profile_id: str, config_file: str = "config/config.ini") -> None:
         config_file: Path to configuration file
     """
     # Setup logging
-    logger = setup_logging()
+    setup_logging()
     
-    print("Starting Option Stream program...")
-    logging.info("Starting Option Stream program...")
+    logger.info("=" * 60)
+    logger.info("Starting Option Stream program...")
+    logger.info("=" * 60)
     
     # Load configuration
     # Try base config.ini first (for backward compatibility), then config/config.ini
@@ -179,17 +192,18 @@ def main(profile_id: str, config_file: str = "config/config.ini") -> None:
     else:
         config = OptionStreamConfig(config_file=config_file)
     
-    logging.info(f"Loaded configuration: tickers={config.tickers}, premium_threshold={config.premium_threshold}")
+    logger.info(f"Configuration loaded: tickers={config.tickers}, premium_threshold=${config.premium_threshold}")
     
     # Initialize persistence layer
     initialize_persistence(config)
+    logger.info("Database persistence initialized")
     
     # Get API credentials
     try:
         api_key, api_secret = get_credentials(profile_id)
-        logging.info(f"Loaded credentials for profile {profile_id}")
+        logger.info(f"Loaded credentials for profile {profile_id}")
     except Exception as e:
-        logging.error(f"Failed to load credentials for profile {profile_id}: {e}")
+        logger.error(f"Failed to load credentials for profile {profile_id}: {e}")
         sys.exit(1)
     
     # Initialize option stream with dynamic API key/secret
@@ -204,9 +218,10 @@ def main(profile_id: str, config_file: str = "config/config.ini") -> None:
         name="DBBatchWriter"
     )
     db_thread.start()
-    logging.info("Background DB batch writer started")
+    logger.debug("Background DB batch writer thread started")
     
     # Fetch option symbols for configured tickers
+    logger.info(f"Fetching option chains for: {', '.join(config.tickers)}")
     fetched_symbols = fetch_options_for_symbols(
         symbols=config.tickers,
         api_key=api_key,
@@ -216,35 +231,36 @@ def main(profile_id: str, config_file: str = "config/config.ini") -> None:
     )
     
     if not fetched_symbols:
-        logging.warning("No option symbols fetched. Exiting program.")
-        print("No option symbols fetched. Exiting program.")
+        logger.error("No option symbols fetched. Exiting program.")
         sys.exit(1)
     
-    logging.info(f"Fetched {len(fetched_symbols)} option symbols")
+    logger.info(f"Fetched {len(fetched_symbols)} option symbols")
     
     # Initialize Redis client
     redis_client = initialize_redis_client(config)
     set_redis_client(redis_client, config.redis_stream_queue_name)
-    print("Redis queue is setup")
-    logging.info(f"Redis configured for stream: {config.redis_stream_queue_name}")
+    logger.info(f"Redis configured for stream: {config.redis_stream_queue_name}")
     
     # Subscribe to trades
     stream = get_option_stream()
     subscribe_to_trades(stream, fetched_symbols, option_trade_handler)
     
+    logger.info("=" * 60)
+    logger.info("Option stream is now running. Press Ctrl+C to stop.")
+    logger.info("=" * 60)
+    
     # Run the stream
     try:
         loop = asyncio.get_event_loop()
         if loop.is_running():
-            logging.warning("Detected running event loop. Using alternative approach.")
+            logger.warning("Detected running event loop. Using alternative approach.")
             loop.create_task(run_stream())
         else:
             asyncio.run(run_stream())
     except RuntimeError as e:
-        logging.error(f"RuntimeError in event loop: {e}")
+        logger.error(f"RuntimeError in event loop: {e}")
     except KeyboardInterrupt:
-        logging.info("Shutdown requested by user")
-        print("\nShutdown requested. Exiting...")
+        logger.info("Shutdown requested by user")
 
 
 if __name__ == "__main__":
@@ -265,4 +281,3 @@ if __name__ == "__main__":
     args = parser.parse_args()
     
     main(profile_id=args.profile_id, config_file=args.config)
-

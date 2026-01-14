@@ -79,7 +79,7 @@ def set_redis_client(client: Any, queue_name: str) -> None:
     global _redis_client, _redis_queue_name
     _redis_client = client
     _redis_queue_name = queue_name
-    logger.info(f"Redis client configured for queue: {queue_name}")
+    logger.debug(f"Redis client configured for queue: {queue_name}")
 
 
 def set_premium_threshold(threshold: int) -> None:
@@ -91,7 +91,7 @@ def set_premium_threshold(threshold: int) -> None:
     """
     global _premium_threshold
     _premium_threshold = threshold
-    logger.info(f"Premium threshold set to: ${threshold}")
+    logger.debug(f"Premium threshold set to: ${threshold}")
 
 
 def get_trade_buffer() -> Queue:
@@ -198,25 +198,19 @@ def push_to_redis(message: Dict[str, Any]) -> bool:
     """
     try:
         if not (_redis_client and _redis_queue_name):
-            print("Redis not configured; skipping push_to_redis.")
-            logger.debug("Redis not configured; skipping push_to_redis.")
+            logger.warning("Redis not configured; skipping push_to_redis.")
             return False
-        
-        print("Time for redis")
         
         message_id = _redis_client.xadd(_redis_queue_name, message)
         if message_id:
-            logger.info(f"Published to {_redis_queue_name}: id={message_id} payload={message}")
-            print(f"Published to {_redis_queue_name}: id={message_id} payload={message}")
+            logger.debug(f"Published to Redis: id={message_id}")
             return True
         else:
-            print(f"Failed to publish to stream {_redis_queue_name}")
             logger.warning(f"Failed to publish to stream {_redis_queue_name}")
             return False
             
     except Exception as e:
-        print(f"Redis XADD failed for stream {_redis_queue_name}: {e}")
-        logger.error(f"Redis XADD failed for stream {_redis_queue_name}: {e}")
+        logger.error(f"Redis XADD failed: {e}")
         return False
 
 
@@ -249,8 +243,6 @@ def write_to_db(data: Any, premium: float) -> None:
         data: Raw trade data from Alpaca stream
         premium: Calculated premium value
     """
-    print("Write in DB time")
-    
     parsed_symbol = parse_option_symbol(data.symbol)
     timestamp = (data.timestamp or datetime.now(timezone.utc)).strftime('%Y-%m-%d %H:%M:%S')
     
@@ -269,8 +261,7 @@ def write_to_db(data: Any, premium: float) -> None:
     
     # Queue for batch DB insert (non-blocking)
     queue_trade(trade_data)
-    
-    print("Written in DB.. Time for redis")
+    logger.debug(f"Queued trade for DB: {data.symbol}")
     
     # Build normalized message for Redis
     ts_iso_z = (data.timestamp or datetime.now(timezone.utc)).astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -308,7 +299,7 @@ async def option_trade_handler(data: Any) -> None:
         data: Raw trade data from Alpaca OptionDataStream
     """
     try:
-        logging.info(f"Received data: {data}")
+        logger.debug(f"Received trade: {data.symbol}")
         
         # Extract trade details
         trade_price = data.price or 0
@@ -321,13 +312,12 @@ async def option_trade_handler(data: Any) -> None:
         
         # Filter by premium threshold
         if premium > _premium_threshold:
-            print(f"Received data: {data}")
+            logger.info(
+                f"HIGH PREMIUM: {symbol} | "
+                f"Price: ${trade_price:.2f} | Size: {trade_size:.0f} | "
+                f"Premium: ${premium:,.2f}"
+            )
             write_to_db(data, premium)
-            
-            print("**********")
-            print(f"{trade_timestamp}: High premium trade detected: {symbol} | "
-                  f"Price: {trade_price} | Size: {trade_size} | Premium: ${premium:,.2f}")
-            print("**********")
             
     except Exception as e:
         logger.error(f"Error processing trade data: {e}")
@@ -347,7 +337,6 @@ async def run_stream() -> None:
     global _option_stream
     
     try:
-        print("Starting option data stream...")
         logger.info("Starting option data stream...")
         
         stream_task = asyncio.create_task(_option_stream._run_forever())
@@ -355,4 +344,3 @@ async def run_stream() -> None:
         
     except Exception as e:
         logger.error(f"Error in stream: {e}")
-
