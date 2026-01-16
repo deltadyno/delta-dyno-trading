@@ -296,7 +296,7 @@ def sleep_determination_extended(
     # Calculate next candle time
     next_candle_time = None
     if latest_close_time is not None:
-        next_candle_time = latest_close_time + (2 * timedelta(minutes=timeframe_minutes))
+        next_candle_time = latest_close_time + timedelta(minutes=timeframe_minutes)
     logger.debug(f"next_candle_time: {next_candle_time}")
 
     # Determine sleep duration based on market status

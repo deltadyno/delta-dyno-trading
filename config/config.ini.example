@@ -1,11 +1,14 @@
 [Common]
 
 # Redis Configuration
-redis_stream_name_breakout_message = breakout_messages:v1
 redis_host = localhost
 redis_port = 6379
 redis_password = your_redis_password_here
 redis_username = your_redis_username_here
+
+# Redis Stream Names
+redis_stream_name_breakout_message = breakout_messages:v1
+redis_stream_name_options_flow = options_flow:v1
 
 # Retry Configuration
 max_retries = 3
@@ -13,11 +16,35 @@ base_delay = 2
 
 # Database Configuration
 db_host = localhost
+db_port = 3306
 db_user = your_db_user
 db_password = your_db_password
 db_name = deltadyno
+
+# Table Names
+db_table_trade_stream = dd_trade_stream
 
 # Data Feed Configuration
 # Options: IEX (free tier, ~2.5% market volume) or SIP (premium, full market)
 data_feed = IEX
 
+# =============================================================================
+# Option Stream Configuration
+# =============================================================================
+
+[options]
+# Number of days forward to look for option expirations
+days_forward = 365
+
+# Minimum premium (in dollars) to filter trades
+premium_threshold = 500
+
+# Comma-separated list of underlying tickers to monitor
+tickers = NVDA, TSLA, MSFT, GOOG, AMZN, META, SPY, QQQ, IWM
+
+# Batch processing settings
+db_batch_size = 20
+db_batch_interval_seconds = 2
+
+# Interval in minutes for publishing tweets (if enabled)
+tweet_interval_minutes = 5

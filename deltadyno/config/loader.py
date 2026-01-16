@@ -72,6 +72,9 @@ class ConfigLoader:
         self.db_host: Optional[str] = self.config.get(
             "Common", "db_host", fallback=None
         )
+        self.db_port: Optional[int] = self.config.getint(
+            "Common", "db_port", fallback=3306
+        )
         self.db_user: Optional[str] = self.config.get(
             "Common", "db_user", fallback=None
         )
@@ -80,6 +83,14 @@ class ConfigLoader:
         )
         self.db_name: Optional[str] = self.config.get(
             "Common", "db_name", fallback=None
+        )
+        self.db_table_trade_stream: Optional[str] = self.config.get(
+            "Common", "db_table_trade_stream", fallback="dd_trade_stream"
+        )
+
+        # Redis stream names
+        self.redis_stream_name_options_flow: Optional[str] = self.config.get(
+            "Common", "redis_stream_name_options_flow", fallback="options_flow:v1"
         )
 
         # Data feed configuration
