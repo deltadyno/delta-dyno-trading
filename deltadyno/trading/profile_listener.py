@@ -199,7 +199,7 @@ def parse_message_data(raw: Dict) -> Dict:
 # =============================================================================
 
 def validate_trading_conditions(
-    bar_date: datetime,
+    bar_date: Optional[datetime],
     last_processed_bar_date: datetime.date,
     logger
 ) -> bool:
@@ -207,13 +207,17 @@ def validate_trading_conditions(
     Validate if trading conditions require state reset.
 
     Args:
-        bar_date: Current bar datetime
+        bar_date: Current bar datetime (can be None)
         last_processed_bar_date: Last processed bar date
         logger: Logger instance
 
     Returns:
         True if date has changed and state should be reset
     """
+    if bar_date is None:
+        logger.warning("bar_date is None, cannot validate trading conditions")
+        return False
+    
     logger.debug(f"bar_date.date(): {bar_date.date()}, last_processed_bar_date: {last_processed_bar_date}")
     if bar_date.date() != last_processed_bar_date:
         logger.debug(f"Date has changed, resetting position count. bar_date: {bar_date.date()}, last_processed_bar_date: {last_processed_bar_date}")
@@ -222,7 +226,7 @@ def validate_trading_conditions(
 
 
 def check_skip_trading_days(
-    bar_date: datetime,
+    bar_date: Optional[datetime],
     skip_trading_days_list: List[datetime.date],
     logger
 ) -> bool:
@@ -230,13 +234,17 @@ def check_skip_trading_days(
     Check if trading should be skipped for the current date.
 
     Args:
-        bar_date: Current bar datetime
+        bar_date: Current bar datetime (can be None)
         skip_trading_days_list: List of dates to skip
         logger: Logger instance
 
     Returns:
         True if trading should be skipped
     """
+    if bar_date is None:
+        logger.warning("bar_date is None, skipping trading day check")
+        return True  # Skip if we can't determine the date
+    
     if bar_date.date() in skip_trading_days_list:
         print(f"Skipping trading for date: {bar_date.date()}")
         logger.info(f"Skipping trading for date: {bar_date.date()}")
@@ -585,6 +593,13 @@ async def process_message(
             return last_processed_bar_date, open_position_cnt, recent_opened_symbol
 
         bar_date = data["bar_date"]
+        
+        # Early exit if bar_date could not be parsed
+        if bar_date is None:
+            logger.warning(f"Could not parse bar_date from message. Skipping message.")
+            print(f"Warning: Could not parse bar_date from message. Skipping.")
+            return last_processed_bar_date, open_position_cnt, recent_opened_symbol
+        
         skip_trading_days_list = parse_skip_trading_days(config, logger)
 
         # Reset state if date changed
