@@ -440,14 +440,19 @@ def process_order(
         return None, time_age_spent
 
     # Already processed in this range
-    if seconds_range == first_time_sales.get(symbol, 0):
+    # Match old implementation: check if symbol exists before accessing
+    if symbol in first_time_sales and seconds_range == first_time_sales[symbol]:
         print(f"Symbol: {symbol} - Qty {qty}, Age: {age_seconds}s. Already processed in range {seconds_range}. Skipping")
         logger.info(f"Symbol: {symbol} - Qty {qty}, Age: {age_seconds}s. Already processed in range {seconds_range}. Skipping")
         print("\n")
         return None, time_age_spent
 
     # Track previous range for potential rollback
-    prev_seconds_range = first_time_sales.get(symbol, 0)
+    # Match old implementation: initialize to 0, then update if symbol exists
+    prev_seconds_range = 0
+    if symbol in first_time_sales:
+        prev_seconds_range = first_time_sales[symbol]
+        del first_time_sales[symbol]
     if symbol in first_time_sales:
         del first_time_sales[symbol]
 
@@ -522,8 +527,9 @@ def _handle_within_threshold(
         cancelled_order_id = order_id
 
         logger.info(f"Update position - Symbol: {symbol}, qty: {qty}, order_type: limit, side: buy, status: cancelled, price: {current_price}")
-        print(f"Symbol: {symbol} - Qty 0, Canceled for qty {qty} at {sell_percent:.2%} due to age {age_seconds}s. Pending: 0")
-        logger.info(f"Symbol: {symbol} - Qty 0, Canceled for qty {qty} at {sell_percent:.2%} due to age {age_seconds}s. Pending: 0")
+
+        print(f"Symbol: {symbol} - Qty 0, Successfully canceled for qty {qty} at {sell_percent:.2%} due to order age {age_seconds} seconds. Pending qty : 0, price_diff: {price_diff}, Price Threshold: {price_threshold}, sell_diff_check :{sell_diff_check}")
+        logger.info(f"Symbol: {symbol} - Qty 0, Successfully canceled for qty {qty} at {sell_percent:.2%} due to order age {age_seconds} seconds. Pending qty : 0, price_diff: {price_diff}, Price Threshold: {price_threshold}, sell_diff_check :{sell_diff_check}")
     else:
         # Multiple quantities - partial cancel/replace
         create_sell_qty = max(1, int(qty * create_percent))
@@ -540,17 +546,17 @@ def _handle_within_threshold(
             logger.info(f"Update position - Symbol: {symbol}, qty: {pending_qty}, order_type: limit, side: buy, status: replaced, price: {current_price}")
             logger.debug(f"time_age_spent is set to {age_seconds}")
 
-        print(f"Symbol: {symbol} - Qty {qty - create_sell_qty}, Canceled for qty {create_sell_qty} at {create_percent:.2%} due to age {age_seconds}s")
-        logger.info(f"Symbol: {symbol} - Qty {qty - create_sell_qty}, Canceled for qty {create_sell_qty} at {create_percent:.2%} due to age {age_seconds}s")
+        print(f"Symbol: {symbol} - Qty {qty - int(create_sell_qty)}, Successfully canceled for qty {create_sell_qty} at {create_percent:.2%} due to order age {age_seconds} seconds. Price_diff: {price_diff}, Price Threshold: {price_threshold}, sell_diff_check :{sell_diff_check}")
+        logger.info(f"Symbol: {symbol} - Qty {qty - int(create_sell_qty)}, Successfully canceled for qty {create_sell_qty} at {create_percent:.2%} due to order age {age_seconds} seconds. Price_diff: {price_diff}, Price Threshold: {price_threshold}, sell_diff_check :{sell_diff_check}")
 
     # Place new market order for cancelled quantity
-    logger.info(f"Symbol: {symbol} - Placing new order for {create_sell_qty} qty at {create_percent:.2%} of original qty {qty} at price: {current_price}")
-    print(f"Symbol: {symbol} - Placing new order for {create_sell_qty} qty at price: {current_price}")
+    logger.info(f"Symbol: {symbol} - Placing new order for {create_sell_qty} qty at {create_percent:.2%} of original qty {qty} at price: {current_price}. PriceDiff : {price_diff}, PriceThreshold :{price_threshold}, sell_diff_check :{sell_diff_check}")
+    print(f"Symbol: {symbol} - Placing new order for {create_sell_qty} qty at {create_percent:.2%} of original qty {qty} at price: {current_price}. PriceDiff : {price_diff}, PriceThreshold :{price_threshold}, sell_diff_check :{sell_diff_check}")
 
     place_order(trading_client, symbol, create_sell_qty, 0.0, current_price, False, logger)
 
-    print(f"Symbol {symbol}: Market Order submitted for qty {create_sell_qty} at price {current_price}")
-    logger.info(f"Symbol {symbol}: Market Order submitted for qty {create_sell_qty} at price {current_price}")
+    print(f"Symbol {symbol} : Market Order submitted successfully for order qty {create_sell_qty} at price {current_price}")
+    logger.info(f"Symbol {symbol} : Market Order submitted successfully for order qty {create_sell_qty} at price {current_price}")
 
     # Clean up tracking if all quantities processed
     if int(qty) - int(create_sell_qty) < 1:
@@ -582,8 +588,8 @@ def _handle_exceeds_threshold(
     cancelled_order_id = None
 
     if price_diff <= sell_diff_check:
-        print(f"Symbol: {symbol} Qty {qty}, Age {age_seconds}s. Skip sell: Price_diff {price_diff} <= Sell_diff_check {sell_diff_check}")
-        logger.info(f"Symbol: {symbol} - Qty {qty}, Age {age_seconds}s. Skip: Price_diff {price_diff} <= Sell_diff_check {sell_diff_check}")
+        print(f"Symbol: {symbol} Qty {qty}, Age {age_seconds} seconds. Skip sell as Price_diff: {price_diff} less than equal to Sell Diff check: {sell_diff_check}")
+        logger.info(f"Symbol: {symbol} - Qty {qty}, Age {age_seconds} seconds. Skip sell as Price_diff: {price_diff} less than equal to Sell Diff check: {sell_diff_check}")
         first_time_sales[symbol] = prev_seconds_range
         return None, time_age_spent
 
@@ -597,14 +603,15 @@ def _handle_exceeds_threshold(
             del first_time_sales[symbol]
         time_age_spent = 0.0
 
-        print(f"Symbol: {symbol} - Qty 0, Canceled for qty 1 due to age {age_seconds}s. Pending: 0")
-        logger.info(f"Symbol: {symbol} - Qty 0, Canceled for qty 1 due to age {age_seconds}s. Pending: 0")
+        print(f"Symbol: {symbol} - Qty 0, Successfully canceled for qty 1 due to order age {age_seconds} seconds. Pending qty :0, price_diff: {price_diff}, Price Threshold: {price_threshold}, sell_diff_check :{sell_diff_check}")
+        logger.info(f"Symbol: {symbol} - Qty 0, Successfully canceled for qty 1 due to order age {age_seconds} seconds. Pending qty :0, price_diff: {price_diff}, Price Threshold: {price_threshold}, sell_diff_check :{sell_diff_check}")
         sleep(2)
 
     elif sell_percent > 0:
         # Multiple quantities - partial cancel
-        sell_qty = max(1, int(qty * sell_percent))
-        pending_qty = max(1, int(qty - sell_qty))
+        # Note: Converting to string to match original implementation (line 639 of old code)
+        sell_qty = str(max(1, int(qty * sell_percent)))
+        pending_qty = max(1, int(qty - int(sell_qty)))
         time_age_spent = age_seconds
 
         if int(sell_qty) == int(qty):
@@ -616,11 +623,11 @@ def _handle_exceeds_threshold(
             logger.debug(f"time_age_spent set to {age_seconds}")
             logger.info(f"Update position - Symbol: {symbol}, qty: {pending_qty}, order_type: limit, side: buy, status: replaced, price: {current_price}")
 
-        print(f"Symbol: {symbol} - Qty {qty - sell_qty}, Canceled for qty {sell_qty} at {sell_percent:.2%} due to age {age_seconds}s")
-        logger.info(f"Symbol: {symbol} - Qty {qty - sell_qty}, Canceled for qty {sell_qty} at {sell_percent:.2%} due to age {age_seconds}s")
+        print(f"Symbol: {symbol} - Qty {qty - int(sell_qty)}, Successfully canceled for qty {sell_qty} at {sell_percent:.2%} due to order age {age_seconds} seconds. Price_diff: {price_diff}, Price Threshold: {price_threshold}, sell_diff_check :{sell_diff_check}")
+        logger.info(f"Symbol: {symbol} - Qty {qty - int(sell_qty)}, Successfully canceled for qty {sell_qty} at {sell_percent:.2%} due to order age {age_seconds} seconds. Price_diff: {price_diff}, Price Threshold: {price_threshold}, sell_diff_check :{sell_diff_check}")
 
         # Clean up if all quantities processed
-        if int(qty) - int(sell_qty) < 1:
+        if int(qty) - int(sell_qty) < 1:  # sell_qty is string, convert to int
             time_age_spent = 0.0
             if symbol in first_time_sales:
                 del first_time_sales[symbol]
@@ -628,8 +635,8 @@ def _handle_exceeds_threshold(
         sleep(2)
     else:
         first_time_sales[symbol] = prev_seconds_range
-        print(f"Symbol: {symbol} - Qty {qty}, Age {age_seconds}s has sell_percent {sell_percent} at prev range {prev_seconds_range}. Skipping")
-        logger.info(f"Symbol: {symbol} - Qty {qty}, Age {age_seconds}s has sell_percent {sell_percent} at prev range {prev_seconds_range}. Skipping")
+        print(f"Symbol: {symbol} - Qty {qty}, Age seconds {age_seconds} has sell_percent {sell_percent} with prev sell was at {prev_seconds_range}. Skipping")
+        logger.info(f"Symbol: {symbol} - Qty {qty}, Age seconds {age_seconds} has sell_percent {sell_percent} with prev sell was at {prev_seconds_range}. Skipping")
 
     return cancelled_order_id, time_age_spent
 
@@ -653,9 +660,10 @@ def confirm_order_cancellations(
         retries = 0
 
         while retries < ORDER_CONFIRMATION_RETRIES:
-            status = get_order_status(trading_client, order_id, logger)
+            # Match old implementation: get_order_status called without logger
+            status = get_order_status(trading_client, order_id)
 
-            if status == OrderStatus.CANCELED or status == "canceled":
+            if status == OrderStatus.CANCELED:
                 logger.debug(f"Order {order_id} successfully cancelled.")
                 break
             elif status is None:
