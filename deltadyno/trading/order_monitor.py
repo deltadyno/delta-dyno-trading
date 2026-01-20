@@ -161,6 +161,34 @@ def initialize_option_historical_client(
     return OptionHistoricalDataClient(api_key, api_secret)
 
 
+def initialize_redis_client(
+    host: str,
+    port: int,
+    password: str,
+    logger
+) -> redis.Redis:
+    """
+    Initialize Redis client for reading breakout messages.
+
+    Args:
+        host: Redis host
+        port: Redis port
+        password: Redis password
+        logger: Logger instance
+
+    Returns:
+        Configured Redis client instance
+    """
+    print(f"Initializing Redis client at {host}:{port}")
+    logger.info(f"Initializing Redis client at {host}:{port}")
+    return redis.Redis(
+        host=host,
+        port=port,
+        password=password,
+        decode_responses=True
+    )
+
+
 # =============================================================================
 # Market Hours
 # =============================================================================
@@ -403,8 +431,8 @@ def process_order(
 
     # Skip if limit price is None
     if order["limit_price"] is None:
-        print(f"Symbol: {symbol} - Qty {qty}, Age: {age_seconds}s. Skipping (limit price is None)")
-        logger.info(f"Symbol: {symbol} - Qty {qty}, Age: {age_seconds}s. Skipping (limit price is None)")
+        print(f"Symbol: {symbol} - Qty {qty}, Age seconds : {age_seconds}. Skipping as limit price is None")
+        logger.info(f"Symbol: {symbol} - Qty {qty}, Age seconds : {age_seconds}. Skipping as limit price is None")
         return None, time_age_spent
 
     canceled_price = float(order["limit_price"])
@@ -532,8 +560,9 @@ def _handle_within_threshold(
         logger.info(f"Symbol: {symbol} - Qty 0, Successfully canceled for qty {qty} at {sell_percent:.2%} due to order age {age_seconds} seconds. Pending qty : 0, price_diff: {price_diff}, Price Threshold: {price_threshold}, sell_diff_check :{sell_diff_check}")
     else:
         # Multiple quantities - partial cancel/replace
+        # Match original: pending_qty = max(1,qty - int(create_sell_qty)) - qty not wrapped in int
         create_sell_qty = max(1, int(qty * create_percent))
-        pending_qty = max(1, int(qty - create_sell_qty))
+        pending_qty = max(1, qty - int(create_sell_qty))
         time_age_spent = age_seconds
 
         if int(create_sell_qty) == int(qty):
@@ -610,8 +639,9 @@ def _handle_exceeds_threshold(
     elif sell_percent > 0:
         # Multiple quantities - partial cancel
         # Note: Converting to string to match original implementation (line 639 of old code)
+        # Match original: pending_qty = max(1,qty - int(sell_qty)) - qty not wrapped in int
         sell_qty = str(max(1, int(qty * sell_percent)))
-        pending_qty = max(1, int(qty - int(sell_qty)))
+        pending_qty = max(1, qty - int(sell_qty))
         time_age_spent = age_seconds
 
         if int(sell_qty) == int(qty):
@@ -926,10 +956,10 @@ def monitor_limit_orders(
     while True:
         try:
             # Check if profile is active
+            # Note: Original code does NOT have continue here - it logs but continues processing
             if not config.get_active_profile_id():
                 print(f"Profile: {profile_id} is not active. Skipping")
                 logger.info(f"Profile: {profile_id} is not active. Skipping")
-                continue  # Skip to finally block for sleep
             
             # Process breakout messages from Redis (if Redis client is available)
             if redis_client and redis_stream_name:
