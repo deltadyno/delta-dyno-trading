@@ -166,7 +166,8 @@ def determine_sell_quantity(
         Quantity to sell (0 if no action needed)
     """
     logger.debug(f"Determining sell quantity for {symbol} with unrealized profit: {unrealized_plpc:.2%}")
-    logger.debug(f"Profit ranges: {profit_percent_ranges}: qty: {qty}")
+    logger.debug(f"Profit ranges: {profit_percent_ranges}: to_sell_qty : {qty}")
+    print(f"[DEBUG] determine_sell_quantity called for symbol={symbol}, unrealized_plpc={unrealized_plpc}, qty={qty}")
 
     now_utc = datetime.utcnow()
 
@@ -175,7 +176,7 @@ def determine_sell_quantity(
             # Initialize symbol tracking if needed
             if symbol not in first_time_sales:
                 first_time_sales[symbol] = {}
-                logger.debug(f"{symbol} not in first_time_sales, initializing.")
+                print(f"[DEBUG] {symbol} not in first_time_sales, initializing.")
 
             # Check if this range was already handled
             if i in first_time_sales[symbol]:
@@ -190,6 +191,7 @@ def determine_sell_quantity(
                     return 0
 
             # Record this sale and calculate quantity
+            # Now safe to set new timestamp and sell
             first_time_sales[symbol][i] = now_utc
 
             sell_percent = sell_quantity_percentages[i]
@@ -198,7 +200,7 @@ def determine_sell_quantity(
             logger.debug(f"Range {low}-{high}% triggered for {symbol}. Selling {sell_qty} units.")
             return sell_qty
 
-    logger.debug(f"No matching profit range found for {symbol}. Returning 0.")
+    print(f"[DEBUG] No matching profit range found for {symbol}. Returning 0.")
     return 0
 
 
@@ -273,21 +275,13 @@ def print_position_status(
     """
     trailing_stop = trailing_stop_loss_percentages.get(symbol)
 
+    # Match original message format with trailing space
     if trailing_stop is None:
-        status_msg = (
-            f"Symbol: {symbol}, qty: {qty}, unrealized_PL: {unrealized_plpc:.2%}, "
-            f"hardstop: {hardstop:.2%}, profitprcntageforstoploss: {minimum_plpc:.2%}, "
-            f"trailing_stop: NA, close_all_at_min_profit: {close_all_at_min_profit:.2%}"
-        )
+        print(f"Symbol: {symbol}, qty: {qty}, unrealized_PL: {unrealized_plpc:.2%}, hardstop: {hardstop:.2%}, profitprcntageforstoploss: {minimum_plpc:.2%}, trailing_stop: NA, close_all_at_min_profit: {close_all_at_min_profit:.2%} ")
+        logger.info(f"Symbol: {symbol}, qty: {qty}, unrealized_PL: {unrealized_plpc:.2%}, hardstop: {hardstop:.2%}, profitprcntageforstoploss: {minimum_plpc:.2%}, trailing_stop: NA, close_all_at_min_profit: {close_all_at_min_profit:.2%}")
     else:
-        status_msg = (
-            f"Symbol: {symbol}, qty: {qty}, unrealized_PL: {unrealized_plpc:.2%}, "
-            f"hardstop: {hardstop:.2%}, profitprcntageforstoploss: NA, "
-            f"trailing_stop: {trailing_stop:.2%}, close_all_at_min_profit: {close_all_at_min_profit:.2%}"
-        )
-
-    print(status_msg)
-    logger.info(status_msg)
+        print(f"Symbol: {symbol}, qty: {qty}, unrealized_PL: {unrealized_plpc:.2%}, hardstop: {hardstop:.2%}, profitprcntageforstoploss: NA, trailing_stop: {trailing_stop:.2%}, close_all_at_min_profit: {close_all_at_min_profit:.2%} ")
+        logger.info(f"Symbol: {symbol}, qty: {qty}, unrealized_PL: {unrealized_plpc:.2%}, hardstop: {hardstop:.2%}, profitprcntageforstoploss: NA, trailing_stop: {trailing_stop:.2%}, close_all_at_min_profit: {close_all_at_min_profit:.2%}")
 
 
 def cleanup_inactive_symbols(
@@ -387,9 +381,10 @@ def monitor_positions_and_close(
                 logger.debug(f"Position Details json -> {str(position)}")
 
                 # Skip non-option positions
+                # Check if position asset class is 'us_equity' (original message says "non-US equity")
                 if position.asset_class != 'us_option':
-                    logger.debug(f"Skipping non-option position: {position.symbol}, asset_class: {position.asset_class}")
-                    print(f"Skipping non-option position: {position.symbol}, asset_class: {position.asset_class}")
+                    logger.debug(f"Skipping non-US equity position: {position.symbol}, position.asset_class: {position.asset_class}")
+                    print(f"Skipping non-US equity position: {position.symbol}, position.asset_class: {position.asset_class}")
                     continue
 
                 # Extract position data
@@ -426,16 +421,9 @@ def monitor_positions_and_close(
                 )
 
                 if should_close_all:
-                    print(
-                        f"Closing all - unrealizedPL {unrealized_plpc:.2%} either Hard stop {hardstop:.2%} met, "
-                        f"or max profit {close_all_at_min_profit:.2%} met, "
-                        f"or close time {close_all_trade_time} <= current time {datetime.now().time()}."
-                    )
-                    logger.info(
-                        f"Closing all - unrealizedPL {unrealized_plpc:.2%} either Hard stop {hardstop:.2%} met, "
-                        f"or max profit {close_all_at_min_profit:.2%} met, "
-                        f"or close time {close_all_trade_time} <= current time {datetime.now().time()}."
-                    )
+                    # Match original message format exactly
+                    print(f"Closing all - unrealizedPL {unrealized_plpc:.2%} either Hard stop {hardstop:.2%} has met, or max profit {close_all_at_min_profit:.2%} has met or close time {close_all_trade_time} is less than curren time {datetime.now().time()}.")
+                    logger.info(f"Closing all - unrealizedPL {unrealized_plpc:.2%} either Hard stop {hardstop:.2%} has met, or max profit {close_all_at_min_profit:.2%} has met or close time {close_all_trade_time} is less than curren time {datetime.now().time()}.")
 
                     if closeorder:
                         close_position(
@@ -445,8 +433,9 @@ def monitor_positions_and_close(
                         )
                         tap_cnt_to_skip_hard_stop = 0
                     else:
+                        # Match original message exactly
                         print("Skipping closing order. Close Order flag is disabled")
-                        logger.info("Skipping closing order. Close Order flag is disabled")
+                        logger.info("Skipping closing order. Close flag Order is disabled")
                     continue
 
                 # Handle profitable positions - initial trailing stop setup
@@ -461,7 +450,8 @@ def monitor_positions_and_close(
 
                 # Handle trailing stop adjustment as profit rises
                 elif symbol in trailing_stop_loss_percentages and unrealized_plpc > trailing_stop_loss_percentages[symbol]:
-                    if unrealized_plpc > previous_unrealized_plpc.get(symbol, (0.0, None))[0] if isinstance(previous_unrealized_plpc.get(symbol), tuple) else unrealized_plpc > previous_unrealized_plpc.get(symbol, 0.0):
+                    # Match original: direct comparison with previous_unrealized_plpc[symbol]
+                    if unrealized_plpc > previous_unrealized_plpc[symbol]:
                         _handle_trailing_stop_adjustment(
                             symbol, qty, unrealized_plpc, current_price,
                             trailing_stop_loss_percentages, previous_unrealized_plpc,

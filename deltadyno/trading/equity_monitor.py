@@ -269,10 +269,10 @@ def monitor_market_equity(
     while True:
         try:
             # Check if profile is active
+            # Note: Original code does NOT have continue here - it logs but continues processing
             if not config.get_active_profile_id():
                 print(f"Profile: {profile_id} is not active. Skipping")
                 logger.info(f"Profile: {profile_id} is not active. Skipping")
-                continue
 
             # Update logger level if needed
             update_logger_level(logger, config)
