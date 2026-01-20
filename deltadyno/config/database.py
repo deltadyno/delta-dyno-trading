@@ -929,21 +929,32 @@ class DatabaseConfigLoader:
             category: Event category (macro_data, fed_event, earnings, etc.)
             source: Data source identifier
         """
+        cursor = None
         try:
             self._ensure_connection()
-            cursor = self.db_connection.cursor(dictionary=True)
+            
+            with self.lock:
+                if self.db_connection is None or not self.db_connection.is_connected():
+                    raise Exception("Database connection not available")
+                
+                cursor = self.db_connection.cursor(dictionary=True)
 
-            cursor.execute(
-                """
-                INSERT INTO dd_macro_event_heatmap (event_date, description, category, source)
-                VALUES (%s, %s, %s, %s)
-                """,
-                (event_date, description, category, source)
-            )
-            self.db_connection.commit()
-            cursor.close()
+                cursor.execute(
+                    """
+                    INSERT INTO dd_macro_event_heatmap (event_date, description, category, source)
+                    VALUES (%s, %s, %s, %s)
+                    """,
+                    (event_date, description, category, source)
+                )
+                self.db_connection.commit()
 
         except Exception as e:
             print(f"❌ Failed to insert event: {description[:40]}... Error: {e}")
             raise
+        finally:
+            if cursor:
+                try:
+                    cursor.close()
+                except Exception:
+                    pass
 
