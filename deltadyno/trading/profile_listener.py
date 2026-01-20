@@ -148,27 +148,44 @@ def parse_message_data(raw: Dict) -> Dict:
     if symbol is None:
         raise KeyError("symbol")
 
-    # Breakout format fields
+    # Breakout format fields (support both old and new field names)
     candle_size = get("candle_size")
     direction = get("direction")
     bar_strength = get("bar_strength")
-    choppy_level = get("choppy_level")
-    bar_close = get("bar_close")
+    # choppy_level OR choppy_day_count (new format uses choppy_day_count)
+    choppy_level = get("choppy_level") or get("choppy_day_count")
+    # bar_close OR close_price (new format uses close_price)
+    bar_close = get("bar_close") or get("close_price")
     volume = get("volume")
 
-    # Bar date handling
-    bar_date_str = get("bar_date") or get("DateTime")
+    # Bar date handling - support multiple field names and formats
+    # Old format: bar_date, DateTime
+    # New format: close_time (ISO format)
+    bar_date_str = get("bar_date") or get("DateTime") or get("close_time")
     bar_date = None
     if bar_date_str:
-        try:
-            # Breakout format with timezone
-            bar_date = datetime.strptime(bar_date_str, "%Y-%m-%d %H:%M:%S%z")
-        except:
+        # Try multiple datetime formats
+        formats_to_try = [
+            "%Y-%m-%d %H:%M:%S%z",           # With timezone
+            "%Y-%m-%d %H:%M:%S",             # Without timezone
+            "%Y-%m-%dT%H:%M:%S.%f%z",        # ISO format with microseconds and timezone
+            "%Y-%m-%dT%H:%M:%S%z",           # ISO format with timezone
+            "%Y-%m-%dT%H:%M:%S.%f",          # ISO format with microseconds
+            "%Y-%m-%dT%H:%M:%S",             # ISO format basic
+        ]
+        for fmt in formats_to_try:
             try:
-                # Option-flow format (no timezone)
-                bar_date = datetime.strptime(bar_date_str, "%Y-%m-%d %H:%M:%S")
+                bar_date = datetime.strptime(bar_date_str, fmt)
+                break
+            except ValueError:
+                continue
+        
+        # If standard parsing fails, try fromisoformat (handles more variations)
+        if bar_date is None:
+            try:
+                bar_date = datetime.fromisoformat(bar_date_str.replace('Z', '+00:00'))
             except:
-                bar_date = None
+                pass
 
     # Profile ID (optional)
     profile_raw = get("profile_id")
