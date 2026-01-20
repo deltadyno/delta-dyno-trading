@@ -18,9 +18,10 @@ from uuid import UUID
 
 import pandas as pd
 import pytz
+import redis
 from alpaca.data.historical import OptionHistoricalDataClient
 from alpaca.trading.client import TradingClient
-from alpaca.trading.enums import OrderStatus
+from alpaca.trading.enums import OrderStatus, OrderSide
 from alpaca.trading.requests import (
     GetCalendarRequest,
     GetOrdersRequest,
@@ -32,6 +33,7 @@ from deltadyno.config.loader import ConfigLoader
 from deltadyno.trading.orders import place_order
 from deltadyno.utils.helpers import (
     fetch_latest_option_quote,
+    generate_option_symbol,
     get_credentials,
     get_order_status,
     get_ssm_parameter,
@@ -708,6 +710,172 @@ def calculate_sleep_time(
 
 
 # =============================================================================
+# Redis Breakout Message Processing
+# =============================================================================
+
+def process_breakout_messages(
+    redis_client: redis.Redis,
+    stream_name: str,
+    last_id: str,
+    config,
+    trading_client: TradingClient,
+    option_client: OptionHistoricalDataClient,
+    logger
+) -> str:
+    """
+    Read and process breakout messages from Redis stream.
+
+    Args:
+        redis_client: Redis client instance
+        stream_name: Name of the Redis stream
+        last_id: Last processed message ID (use '0' to start from beginning)
+        config: Database configuration loader
+        trading_client: Alpaca TradingClient
+        option_client: Alpaca Option Historical Data Client
+        logger: Logger instance
+
+    Returns:
+        New last processed message ID
+    """
+    try:
+        # Read messages from Redis stream (non-blocking, read up to 10 messages)
+        messages = redis_client.xread({stream_name: last_id}, count=10, block=0)
+        
+        if not messages:
+            return last_id
+        
+        current_last_id = last_id
+        
+        for stream, stream_messages in messages:
+            for msg_id, msg_data in stream_messages:
+                try:
+                    # Parse message data
+                    symbol = msg_data.get("symbol", "")
+                    direction = msg_data.get("direction", "")
+                    close_price_str = msg_data.get("close_price", "")
+                    
+                    if not symbol or not direction or not close_price_str:
+                        logger.warning(f"Invalid breakout message format: {msg_data}")
+                        continue
+                    
+                    # Skip position close messages
+                    if msg_data.get("action") == "close_position":
+                        logger.debug(f"Skipping position close message: {msg_id}")
+                        current_last_id = msg_id
+                        continue
+                    
+                    # Parse close price
+                    try:
+                        close_price = float(close_price_str)
+                    except ValueError:
+                        logger.warning(f"Invalid close_price in message: {close_price_str}")
+                        current_last_id = msg_id
+                        continue
+                    
+                    # Determine option type based on direction
+                    if direction == "upward":
+                        option_type = "C"  # Call option
+                    elif direction == "downward":
+                        option_type = "P"  # Put option
+                    else:
+                        logger.warning(f"Unknown direction: {direction}, skipping")
+                        current_last_id = msg_id
+                        continue
+                    
+                    # Get configuration for option generation
+                    open_position_expiry_trading_day = config.get("open_position_expiry_trading_day", 0, int)
+                    option_expiry_day_flip_to_next_trading_day = config.get(
+                        "option_expiry_day_flip_to_next_trading_day", "15:00", str
+                    )
+                    cents_to_rollover = config.get("cents_to_rollover", 50, int)
+                    limit_order_qty = config.get("limit_order_qty", 1, int)
+                    
+                    # Generate option symbol
+                    now = datetime.now(timezone.utc)
+                    option_symbol = generate_option_symbol(
+                        symbol=symbol,
+                        open_position_expiry_trading_day=open_position_expiry_trading_day,
+                        option_expiry_day_flip_to_next_trading_day=option_expiry_day_flip_to_next_trading_day,
+                        cents_to_rollover=cents_to_rollover,
+                        price=close_price,
+                        option_type=option_type,
+                        now=now,
+                        trading_client=trading_client,
+                        logger=logger
+                    )
+                    
+                    if not option_symbol:
+                        logger.warning(f"Failed to generate option symbol for {symbol} {direction}")
+                        current_last_id = msg_id
+                        continue
+                    
+                    # Get current option quote for limit price
+                    current_price = fetch_latest_option_quote(
+                        option_client, option_symbol, logger
+                    )
+                    
+                    if current_price is None:
+                        logger.warning(f"Could not fetch current price for {option_symbol}, using breakout price")
+                        # Fallback to using the underlying stock price as a rough estimate
+                        current_price = close_price
+                    
+                    # Check if order creation is enabled
+                    create_order_enabled = config.get("create_order", True, bool)
+                    if not create_order_enabled:
+                        logger.info(f"Order creation disabled. Skipping breakout: {symbol} {direction}")
+                        current_last_id = msg_id
+                        continue
+                    
+                    # Place limit order
+                    logger.info(
+                        f"Processing breakout: {symbol} {direction} at ${close_price:.2f}, "
+                        f"placing order for {option_symbol} at ${current_price:.2f}"
+                    )
+                    print(
+                        f"Breakout detected: {symbol} {direction} -> Placing order for "
+                        f"{option_symbol} (qty: {limit_order_qty}, price: ${current_price:.2f})"
+                    )
+                    
+                    order_result = place_order(
+                        trading_client=trading_client,
+                        symbol=option_symbol,
+                        qty=limit_order_qty,
+                        stop_price=0.0,
+                        limit_price=current_price,
+                        is_limit_order=True,
+                        logger=logger,
+                        side=OrderSide.BUY
+                    )
+                    
+                    if order_result:
+                        logger.info(f"Successfully placed order for {option_symbol} from breakout message")
+                    else:
+                        logger.error(f"Failed to place order for {option_symbol}")
+                    
+                    current_last_id = msg_id
+                    
+                except Exception as e:
+                    logger.error(
+                        f"Error processing breakout message {msg_id}: {e}\n"
+                        f"Traceback:\n{traceback.format_exc()}"
+                    )
+                    # Still update last_id to avoid reprocessing the same message
+                    current_last_id = msg_id
+        
+        return current_last_id
+        
+    except redis.exceptions.ConnectionError as e:
+        logger.error(f"Redis connection error: {e}")
+        return last_id
+    except Exception as e:
+        logger.error(
+            f"Error reading breakout messages: {e}\n"
+            f"Traceback:\n{traceback.format_exc()}"
+        )
+        return last_id
+
+
+# =============================================================================
 # Main Monitor Loop
 # =============================================================================
 
@@ -716,6 +884,8 @@ def monitor_limit_orders(
     config,
     trading_client: TradingClient,
     option_client: OptionHistoricalDataClient,
+    redis_client: Optional[redis.Redis],
+    redis_stream_name: str,
     logger
 ) -> None:
     """
@@ -726,6 +896,8 @@ def monitor_limit_orders(
         config: Database configuration loader
         trading_client: Alpaca TradingClient
         option_client: Alpaca Option Historical Data Client
+        redis_client: Redis client for reading breakout messages (optional)
+        redis_stream_name: Name of Redis stream for breakout messages
         logger: Logger instance
     """
     print(f"Client {profile_id}: {config.client_name} started monitoring limit orders.")
@@ -739,6 +911,9 @@ def monitor_limit_orders(
     time_age_spent = 0.0
     prev_date = datetime.now(timezone.utc).date() - timedelta(days=1)
     market_hours = get_regular_market_hours(trading_client, logger)
+    
+    # Initialize Redis stream tracking
+    redis_last_id = "0"  # Start from beginning of stream
 
     while True:
         try:
@@ -747,6 +922,22 @@ def monitor_limit_orders(
                 print(f"Profile: {profile_id} is not active. Skipping")
                 logger.info(f"Profile: {profile_id} is not active. Skipping")
                 continue  # Skip to finally block for sleep
+            
+            # Process breakout messages from Redis (if Redis client is available)
+            if redis_client and redis_stream_name:
+                try:
+                    redis_last_id = process_breakout_messages(
+                        redis_client=redis_client,
+                        stream_name=redis_stream_name,
+                        last_id=redis_last_id,
+                        config=config,
+                        trading_client=trading_client,
+                        option_client=option_client,
+                        logger=logger
+                    )
+                except Exception as e:
+                    logger.error(f"Error processing breakout messages: {e}")
+                    # Continue with order monitoring even if Redis fails
 
             # Parse configuration ranges
             config_keys = [
@@ -882,9 +1073,33 @@ def run_order_monitor(
     # Initialize clients
     trading_client = initialize_trading_client(db_config_loader, api_key, api_secret, logger)
     option_client = initialize_option_historical_client(api_key, api_secret, logger)
+    
+    # Initialize Redis client for reading breakout messages
+    redis_client = None
+    redis_stream_name = file_config.redis_stream_name_breakout_message
+    try:
+        redis_client = initialize_redis_client(
+            host=file_config.redis_host,
+            port=file_config.redis_port,
+            password=file_config.redis_password,
+            logger=logger
+        )
+        logger.info(f"Redis client initialized. Will read from stream: {redis_stream_name}")
+        print(f"Redis client initialized. Will read breakout messages from: {redis_stream_name}")
+    except Exception as e:
+        logger.warning(f"Failed to initialize Redis client: {e}. Breakout message processing disabled.")
+        print(f"Warning: Redis client initialization failed. Breakout message processing disabled.")
 
     # Start monitoring
-    monitor_limit_orders(profile_id, db_config_loader, trading_client, option_client, logger)
+    monitor_limit_orders(
+        profile_id=profile_id,
+        config=db_config_loader,
+        trading_client=trading_client,
+        option_client=option_client,
+        redis_client=redis_client,
+        redis_stream_name=redis_stream_name,
+        logger=logger
+    )
 
 
 # =============================================================================
