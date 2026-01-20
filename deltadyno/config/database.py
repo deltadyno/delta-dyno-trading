@@ -383,23 +383,34 @@ class DatabaseConfigLoader:
             List of values, or empty list on error
         """
         print(f"Fetching value for {attr_config_key}")
+        cursor = None
         try:
             self._ensure_connection()
-            cursor = self.db_connection.cursor(dictionary=True)
+            
+            with self.lock:
+                if self.db_connection is None or not self.db_connection.is_connected():
+                    return []
+                
+                cursor = self.db_connection.cursor(dictionary=True)
 
-            query = f"""
-                SELECT value FROM {table_name}
-                WHERE profile_id = %s AND config_key = %s
-            """
-            cursor.execute(query, (self.profile_id, attr_config_key))
-            result = cursor.fetchall()
-            cursor.close()
+                query = f"""
+                    SELECT value FROM {table_name}
+                    WHERE profile_id = %s AND config_key = %s
+                """
+                cursor.execute(query, (self.profile_id, attr_config_key))
+                result = cursor.fetchall()
 
             return [row["value"] for row in result] if result else []
 
         except Exception as e:
             print(f"Error fetching {attr_config_key} from table {table_name}: {e}")
             return []
+        finally:
+            if cursor:
+                try:
+                    cursor.close()
+                except Exception:
+                    pass
 
     def update_attr(self, attr_config_key: str, attr_value: Any) -> None:
         """
@@ -411,14 +422,28 @@ class DatabaseConfigLoader:
         """
         print(f"Updating {attr_config_key} with value {attr_value}...")
 
-        self._ensure_connection()
-        cursor = self.db_connection.cursor(dictionary=True)
-        cursor.execute(
-            "UPDATE dd_common_config SET value = %s WHERE config_key = %s AND profile_id = %s",
-            (attr_value, attr_config_key, self.profile_id)
-        )
-        self.db_connection.commit()
-        cursor.close()
+        cursor = None
+        try:
+            self._ensure_connection()
+            
+            with self.lock:
+                if self.db_connection is None or not self.db_connection.is_connected():
+                    return
+                
+                cursor = self.db_connection.cursor(dictionary=True)
+                cursor.execute(
+                    "UPDATE dd_common_config SET value = %s WHERE config_key = %s AND profile_id = %s",
+                    (attr_value, attr_config_key, self.profile_id)
+                )
+                self.db_connection.commit()
+        except Exception as e:
+            print(f"Error updating {attr_config_key}: {e}")
+        finally:
+            if cursor:
+                try:
+                    cursor.close()
+                except Exception:
+                    pass
 
     def __getattr__(self, key: str) -> Any:
         """
@@ -495,64 +520,112 @@ class DatabaseConfigLoader:
     def get_active_profile_list(self) -> List[int]:
         """Fetch list of active profile IDs."""
         print("Fetching all active profile IDs...")
+        cursor = None
         try:
             self._ensure_connection()
-            cursor = self.db_connection.cursor(dictionary=True)
-            cursor.execute("SELECT profile_id FROM user_profile WHERE is_active = 1")
-            result = cursor.fetchall()
+            
+            with self.lock:
+                if self.db_connection is None or not self.db_connection.is_connected():
+                    return []
+                
+                cursor = self.db_connection.cursor(dictionary=True)
+                cursor.execute("SELECT profile_id FROM user_profile WHERE is_active = 1")
+                result = cursor.fetchall()
+            
             print(f"Raw active profile data: {result}")
-            cursor.close()
             return [row["profile_id"] for row in result] if result else []
         except Exception as e:
             print(f"Error fetching active profile list: {e}")
             return []
+        finally:
+            if cursor:
+                try:
+                    cursor.close()
+                except Exception:
+                    pass
 
     def get_active_profile_list_with_type(self) -> List[Dict]:
         """Fetch list of active profile IDs with account types."""
         print("Fetching all active profile IDs and account types...")
+        cursor = None
         try:
             self._ensure_connection()
-            cursor = self.db_connection.cursor(dictionary=True)
-            cursor.execute(
-                "SELECT profile_id, account_type FROM user_profile WHERE is_active = 1"
-            )
-            result = cursor.fetchall()
+            
+            with self.lock:
+                if self.db_connection is None or not self.db_connection.is_connected():
+                    return []
+                
+                cursor = self.db_connection.cursor(dictionary=True)
+                cursor.execute(
+                    "SELECT profile_id, account_type FROM user_profile WHERE is_active = 1"
+                )
+                result = cursor.fetchall()
+            
             print(f"Raw active profile data: {result}")
-            cursor.close()
             return result if result else []
         except Exception as e:
             print(f"Error fetching active profile list: {e}")
             return []
+        finally:
+            if cursor:
+                try:
+                    cursor.close()
+                except Exception:
+                    pass
 
     def get_inactive_profile_list(self) -> List[int]:
         """Fetch list of inactive profile IDs."""
         print("Fetching all inactive profile IDs...")
+        cursor = None
         try:
             self._ensure_connection()
-            cursor = self.db_connection.cursor(dictionary=True)
-            cursor.execute("SELECT profile_id FROM user_profile WHERE is_active = 0")
-            result = cursor.fetchall()
-            cursor.close()
+            
+            with self.lock:
+                if self.db_connection is None or not self.db_connection.is_connected():
+                    return []
+                
+                cursor = self.db_connection.cursor(dictionary=True)
+                cursor.execute("SELECT profile_id FROM user_profile WHERE is_active = 0")
+                result = cursor.fetchall()
+            
             return [row["profile_id"] for row in result] if result else []
         except Exception as e:
             print(f"Error fetching inactive profile list: {e}")
             return []
+        finally:
+            if cursor:
+                try:
+                    cursor.close()
+                except Exception:
+                    pass
 
     def get_active_profile_id(self) -> Optional[int]:
         """Fetch the is_active status for the current profile."""
+        cursor = None
         try:
             self._ensure_connection()
-            cursor = self.db_connection.cursor(dictionary=True)
-            cursor.execute(
-                "SELECT is_active FROM user_profile WHERE profile_id = %s",
-                (self.profile_id,)
-            )
-            result = cursor.fetchone()
-            cursor.close()
+            
+            with self.lock:
+                if self.db_connection is None or not self.db_connection.is_connected():
+                    return None
+                
+                cursor = self.db_connection.cursor(dictionary=True)
+                cursor.execute(
+                    "SELECT is_active FROM user_profile WHERE profile_id = %s",
+                    (self.profile_id,)
+                )
+                result = cursor.fetchone()
+            
             return result["is_active"] if result else None
         except Exception as e:
             print(f"Error fetching active profile_id: {e}")
             return None
+        finally:
+            if cursor:
+                try:
+                    cursor.close()
+                except Exception:
+                    pass
 
     # =========================================================================
     # Trading Rules
@@ -561,57 +634,115 @@ class DatabaseConfigLoader:
     def fetch_active_rules(self) -> List[Dict]:
         """Fetch all active trading rules for the current profile."""
         print("Fetching all active rules...")
-
-        self._ensure_connection()
-        cursor = self.db_connection.cursor(dictionary=True)
-        cursor.execute(
-            "SELECT * FROM dd_trading_rules WHERE profile_id = %s AND is_active = 1",
-            (self.profile_id,)
-        )
-        rules = cursor.fetchall()
-        cursor.close()
-        return rules
+        cursor = None
+        try:
+            self._ensure_connection()
+            
+            with self.lock:
+                if self.db_connection is None or not self.db_connection.is_connected():
+                    return []
+                
+                cursor = self.db_connection.cursor(dictionary=True)
+                cursor.execute(
+                    "SELECT * FROM dd_trading_rules WHERE profile_id = %s AND is_active = 1",
+                    (self.profile_id,)
+                )
+                rules = cursor.fetchall()
+            
+            return rules
+        except Exception as e:
+            print(f"Error fetching active rules: {e}")
+            return []
+        finally:
+            if cursor:
+                try:
+                    cursor.close()
+                except Exception:
+                    pass
 
     def fetch_rule_conditions(self, rule_id: int) -> List[Dict]:
         """Fetch conditions for a specific trading rule."""
         print("Fetching all rule conditions...")
-
-        self._ensure_connection()
-        cursor = self.db_connection.cursor(dictionary=True)
-        cursor.execute(
-            "SELECT * FROM dd_trading_rule_conditions WHERE rule_id = %s",
-            (rule_id,)
-        )
-        conditions = cursor.fetchall()
-        cursor.close()
-        return conditions
+        cursor = None
+        try:
+            self._ensure_connection()
+            
+            with self.lock:
+                if self.db_connection is None or not self.db_connection.is_connected():
+                    return []
+                
+                cursor = self.db_connection.cursor(dictionary=True)
+                cursor.execute(
+                    "SELECT * FROM dd_trading_rule_conditions WHERE rule_id = %s",
+                    (rule_id,)
+                )
+                conditions = cursor.fetchall()
+            
+            return conditions
+        except Exception as e:
+            print(f"Error fetching rule conditions: {e}")
+            return []
+        finally:
+            if cursor:
+                try:
+                    cursor.close()
+                except Exception:
+                    pass
 
     def fetch_rule_actions(self, rule_id: int) -> List[Dict]:
         """Fetch actions for a specific trading rule."""
         print("Fetching all rule actions...")
-
-        self._ensure_connection()
-        cursor = self.db_connection.cursor(dictionary=True)
-        cursor.execute(
-            "SELECT * FROM dd_trading_rule_actions WHERE rule_id = %s",
-            (rule_id,)
-        )
-        actions = cursor.fetchall()
-        cursor.close()
-        return actions
+        cursor = None
+        try:
+            self._ensure_connection()
+            
+            with self.lock:
+                if self.db_connection is None or not self.db_connection.is_connected():
+                    return []
+                
+                cursor = self.db_connection.cursor(dictionary=True)
+                cursor.execute(
+                    "SELECT * FROM dd_trading_rule_actions WHERE rule_id = %s",
+                    (rule_id,)
+                )
+                actions = cursor.fetchall()
+            
+            return actions
+        except Exception as e:
+            print(f"Error fetching rule actions: {e}")
+            return []
+        finally:
+            if cursor:
+                try:
+                    cursor.close()
+                except Exception:
+                    pass
 
     def update_last_executed(self, rule_id: int) -> None:
         """Update the last_executed timestamp for a trading rule."""
         print(f"Updating last_executed timestamp for rule {rule_id}")
-
-        self._ensure_connection()
-        cursor = self.db_connection.cursor(dictionary=True)
-        cursor.execute(
-            "UPDATE dd_trading_rules SET last_executed = NOW() WHERE id = %s",
-            (rule_id,)
-        )
-        self.db_connection.commit()
-        cursor.close()
+        cursor = None
+        try:
+            self._ensure_connection()
+            
+            with self.lock:
+                if self.db_connection is None or not self.db_connection.is_connected():
+                    return
+                
+                cursor = self.db_connection.cursor(dictionary=True)
+                cursor.execute(
+                    "UPDATE dd_trading_rules SET last_executed = NOW() WHERE id = %s",
+                    (rule_id,)
+                )
+                self.db_connection.commit()
+        except Exception as e:
+            print(f"Error updating last_executed: {e}")
+        finally:
+            if cursor:
+                try:
+                    cursor.close()
+                except Exception:
+                    pass
 
     # =========================================================================
     # Membership Management
@@ -620,63 +751,98 @@ class DatabaseConfigLoader:
     def downgrade_expired_memberships(self) -> None:
         """Downgrade expired premium memberships to free tier."""
         print("Checking for expired premium memberships...")
-
+        cursor = None
         try:
             self._ensure_connection()
-            cursor = self.db_connection.cursor()
-            cursor.execute("""
-                UPDATE dd_membership
-                SET membership_type = 'Free', status = 'Expired'
-                WHERE end_date < CURDATE()
-            """)
-            affected_rows = cursor.rowcount
-            self.db_connection.commit()
-            cursor.close()
+            
+            with self.lock:
+                if self.db_connection is None or not self.db_connection.is_connected():
+                    return
+                
+                cursor = self.db_connection.cursor()
+                cursor.execute("""
+                    UPDATE dd_membership
+                    SET membership_type = 'Free', status = 'Expired'
+                    WHERE end_date < CURDATE()
+                """)
+                affected_rows = cursor.rowcount
+                self.db_connection.commit()
+            
             print(f"{affected_rows} membership(s) downgraded from Premium to Free.")
         except mysql.connector.Error as err:
             print(f"Error updating membership table: {err}")
+        finally:
+            if cursor:
+                try:
+                    cursor.close()
+                except Exception:
+                    pass
 
     def get_active_memberships_by_type(self, membership_type: str) -> List[Dict]:
         """Fetch active memberships of a specific type."""
         print(f"Fetching active memberships with type '{membership_type}'...")
+        cursor = None
         try:
             self._ensure_connection()
-            cursor = self.db_connection.cursor(dictionary=True)
-            cursor.execute(
-                """
-                SELECT * FROM dd_membership
-                WHERE membership_type = %s AND end_date >= CURDATE()
-                """,
-                (membership_type,)
-            )
-            result = cursor.fetchall()
-            cursor.close()
+            
+            with self.lock:
+                if self.db_connection is None or not self.db_connection.is_connected():
+                    return []
+                
+                cursor = self.db_connection.cursor(dictionary=True)
+                cursor.execute(
+                    """
+                    SELECT * FROM dd_membership
+                    WHERE membership_type = %s AND end_date >= CURDATE()
+                    """,
+                    (membership_type,)
+                )
+                result = cursor.fetchall()
+            
             print(f"Found {len(result)} active '{membership_type}' memberships.")
             return result
         except Exception as e:
             print(f"Error fetching active memberships: {e}")
             return []
+        finally:
+            if cursor:
+                try:
+                    cursor.close()
+                except Exception:
+                    pass
 
     def get_expired_memberships_by_type(self, membership_type: str) -> List[Dict]:
         """Fetch expired memberships of a specific type."""
         print(f"Fetching expired memberships with type '{membership_type}'...")
+        cursor = None
         try:
             self._ensure_connection()
-            cursor = self.db_connection.cursor(dictionary=True)
-            cursor.execute(
-                """
-                SELECT * FROM dd_membership
-                WHERE membership_type = %s AND end_date < CURDATE()
-                """,
-                (membership_type,)
-            )
-            result = cursor.fetchall()
-            cursor.close()
+            
+            with self.lock:
+                if self.db_connection is None or not self.db_connection.is_connected():
+                    return []
+                
+                cursor = self.db_connection.cursor(dictionary=True)
+                cursor.execute(
+                    """
+                    SELECT * FROM dd_membership
+                    WHERE membership_type = %s AND end_date < CURDATE()
+                    """,
+                    (membership_type,)
+                )
+                result = cursor.fetchall()
+            
             print(f"Found {len(result)} expired '{membership_type}' memberships.")
             return result
         except Exception as e:
             print(f"Error fetching expired memberships: {e}")
             return []
+        finally:
+            if cursor:
+                try:
+                    cursor.close()
+                except Exception:
+                    pass
 
     # =========================================================================
     # Database Operations
@@ -690,14 +856,31 @@ class DatabaseConfigLoader:
             query: SQL query to execute
             params: Optional query parameters
         """
+        cursor = None
         try:
             self._ensure_connection()
-            with self.db_connection.cursor() as cursor:
+            
+            with self.lock:
+                if self.db_connection is None or not self.db_connection.is_connected():
+                    return
+                
+                cursor = self.db_connection.cursor()
                 cursor.execute(query, params or ())
                 self.db_connection.commit()
         except Exception as e:
             print(f"❌ Error executing SQL query: {e}")
-            self.db_connection.rollback()
+            with self.lock:
+                if self.db_connection is not None and self.db_connection.is_connected():
+                    try:
+                        self.db_connection.rollback()
+                    except Exception:
+                        pass
+        finally:
+            if cursor:
+                try:
+                    cursor.close()
+                except Exception:
+                    pass
 
     def update_config_in_db(self, query: str, params: Optional[tuple] = None) -> None:
         """
@@ -707,17 +890,28 @@ class DatabaseConfigLoader:
             query: SQL update query
             params: Optional query parameters
         """
+        cursor = None
         try:
             self._ensure_connection()
-            cursor = self.db_connection.cursor()
-            if params:
-                cursor.execute(query, params)
-            else:
-                cursor.execute(query)
-            self.db_connection.commit()
-            cursor.close()
+            
+            with self.lock:
+                if self.db_connection is None or not self.db_connection.is_connected():
+                    return
+                
+                cursor = self.db_connection.cursor()
+                if params:
+                    cursor.execute(query, params)
+                else:
+                    cursor.execute(query)
+                self.db_connection.commit()
         except mysql.connector.Error as err:
             print(f"Error updating config in DB: {err}")
+        finally:
+            if cursor:
+                try:
+                    cursor.close()
+                except Exception:
+                    pass
 
     def insert_event(
         self,
