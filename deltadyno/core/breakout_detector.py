@@ -850,11 +850,9 @@ def main(
         refresh_interval=300
     )
 
-    # Fetch credentials from SSM
-    #api_key = get_ssm_parameter(f'profile{profile_id}_apikey')
-    #api_secret = get_ssm_parameter(f'profile{profile_id}_apisecret')
-    
-    # Get API credentials
+    # Get API credentials (uses environment setting from config.ini)
+    # - development: loads from config/credentials.py
+    # - production: loads from AWS SSM Parameter Store
     api_key, api_secret = get_credentials("1")
 
     # Initialize logger

@@ -1,5 +1,9 @@
 [Common]
 
+# Environment Configuration
+# Options: development (uses local config/credentials.py) or production (uses AWS SSM)
+environment = development
+
 # Redis Configuration
 redis_host = localhost
 redis_port = 6379

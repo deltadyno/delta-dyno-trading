@@ -36,7 +36,6 @@ from deltadyno.utils.helpers import (
     generate_option_symbol,
     get_credentials,
     get_order_status,
-    get_ssm_parameter,
 )
 from deltadyno.utils.logger import setup_logger
 
@@ -1075,11 +1074,9 @@ def run_order_monitor(
         profile_id: Client profile ID
         log_to_console: If True, log to console instead of file
     """
-    # Fetch credentials from SSM
-    #api_key = get_ssm_parameter(f'profile{profile_id}_apikey')
-    #api_secret = get_ssm_parameter(f'profile{profile_id}_apisecret')
-
-    # Get API credentials
+    # Get API credentials (uses environment setting from config.ini)
+    # - development: loads from config/credentials.py
+    # - production: loads from AWS SSM Parameter Store
     api_key, api_secret = get_credentials(profile_id)
 
     # Ensure logs directory exists

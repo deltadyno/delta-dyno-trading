@@ -35,7 +35,6 @@ from deltadyno.trading.position_handler import (
 from deltadyno.utils.helpers import (
     generate_option_symbol,
     get_credentials,
-    get_ssm_parameter,
     identify_option_type,
 )
 from deltadyno.utils.logger import setup_logger, update_logger_level
@@ -706,12 +705,10 @@ async def run_profile_listener(profile_id: str) -> None:
     Args:
         profile_id: Profile ID to listen for
     """
-    # Get API credentials
-    api_key = get_ssm_parameter(f'profile{profile_id}_apikey')
-    api_secret = get_ssm_parameter(f'profile{profile_id}_apisecret')
-
-    # Alternative: Use local credentials
-    # api_key, api_secret = get_credentials(profile_id)
+    # Get API credentials (uses environment setting from config.ini)
+    # - development: loads from config/credentials.py
+    # - production: loads from AWS SSM Parameter Store
+    api_key, api_secret = get_credentials(profile_id)
 
     # Ensure logs directory exists
     logs_dir = os.path.join(os.getcwd(), "logs")

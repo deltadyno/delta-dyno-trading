@@ -53,6 +53,63 @@ def get_ssm_parameter(parameter_name: str, region: str = "us-east-1") -> str:
 
 # Cache for loaded credentials
 _credentials_cache = None
+_environment_cache = None
+
+
+def _get_environment() -> str:
+    """
+    Get the environment setting from config.ini.
+
+    Returns:
+        'development' or 'production' (defaults to 'development')
+    """
+    global _environment_cache
+
+    if _environment_cache is not None:
+        return _environment_cache
+
+    try:
+        import os
+        import configparser
+
+        # Find config.ini
+        config_paths = [
+            os.path.join(os.getcwd(), 'config', 'config.ini'),
+            os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 'config', 'config.ini'),
+        ]
+
+        for config_path in config_paths:
+            if os.path.exists(config_path):
+                config = configparser.ConfigParser()
+                config.read(config_path)
+                _environment_cache = config.get('Common', 'environment', fallback='development').lower().strip()
+                return _environment_cache
+
+        _environment_cache = 'development'
+        return _environment_cache
+    except Exception:
+        _environment_cache = 'development'
+        return _environment_cache
+
+
+def is_production() -> bool:
+    """
+    Check if running in production environment.
+
+    Returns:
+        True if environment is 'production', False otherwise
+    """
+    return _get_environment() == 'production'
+
+
+def is_development() -> bool:
+    """
+    Check if running in development environment.
+
+    Returns:
+        True if environment is 'development', False otherwise
+    """
+    return _get_environment() == 'development'
 
 
 def _load_credentials_from_file() -> dict:
@@ -94,13 +151,24 @@ def _load_credentials_from_file() -> dict:
         return _credentials_cache
 
 
-def get_credentials(client_id: str) -> Tuple[str, str]:
+def _load_credentials_from_ssm(client_id: str) -> Tuple[str, str]:
     """
-    Retrieve API credentials for a client.
+    Load credentials from AWS SSM Parameter Store.
 
-    This function checks in the following order:
-    1. Local credentials file (config/credentials.py) - for local development
-    2. AWS SSM Parameter Store - for production environments
+    Args:
+        client_id: Client identifier (profile ID)
+
+    Returns:
+        Tuple of (api_key, api_secret)
+    """
+    api_key = get_ssm_parameter(f'profile{client_id}_apikey')
+    api_secret = get_ssm_parameter(f'profile{client_id}_apisecret')
+    return api_key, api_secret
+
+
+def _load_credentials_local(client_id: str) -> Tuple[str, str]:
+    """
+    Load credentials from local credentials.py file.
 
     Args:
         client_id: Client identifier (profile ID)
@@ -109,43 +177,60 @@ def get_credentials(client_id: str) -> Tuple[str, str]:
         Tuple of (api_key, api_secret)
 
     Raises:
-        Exception: If credentials for the client are not found in either source
+        Exception: If credentials not found
     """
     client_key = f"client_{client_id}"
-
-    # First, try loading from local credentials file (for local testing)
     local_credentials = _load_credentials_from_file()
+
     if client_key in local_credentials and local_credentials[client_key]:
         creds = local_credentials[client_key]
         return creds["api_key"], creds["api_secret"]
 
-    # Fall back to AWS SSM Parameter Store (for production)
-    try:
-        api_key = get_ssm_parameter(f'profile{client_id}_apikey')
-        api_secret = get_ssm_parameter(f'profile{client_id}_apisecret')
-        return api_key, api_secret
-    except Exception as e:
-        raise Exception(
-            f"Credentials for client {client_id} not found! "
-            f"Please configure either config/credentials.py (for local testing) or AWS SSM parameters (for production). "
-            f"Error: {e}"
-        )
+    raise Exception(
+        f"Credentials for client {client_id} not found in config/credentials.py! "
+        f"Expected key: '{client_key}'"
+    )
 
 
-def get_ssm_parameter(parameter_name: str, region: str = "us-east-1") -> str:
+def get_credentials(client_id: str) -> Tuple[str, str]:
     """
-    Fetch a parameter value from AWS SSM Parameter Store.
+    Retrieve API credentials for a client based on environment setting.
+
+    The environment is determined by 'environment' in config.ini:
+    - 'development': Uses local config/credentials.py file
+    - 'production': Uses AWS SSM Parameter Store
 
     Args:
-        parameter_name: Name of the parameter in SSM
-        region: AWS region where the parameter is stored
+        client_id: Client identifier (profile ID)
 
     Returns:
-        Parameter value as a string
+        Tuple of (api_key, api_secret)
+
+    Raises:
+        Exception: If credentials for the client are not found
     """
-    ssm = boto3.client("ssm", region_name=region)
-    response = ssm.get_parameter(Name=parameter_name, WithDecryption=True)
-    return response["Parameter"]["Value"]
+    environment = _get_environment()
+
+    if environment == 'production':
+        # Production: Use AWS SSM Parameter Store
+        try:
+            return _load_credentials_from_ssm(client_id)
+        except Exception as e:
+            raise Exception(
+                f"Credentials for client {client_id} not found in AWS SSM! "
+                f"Expected parameters: 'profile{client_id}_apikey' and 'profile{client_id}_apisecret'. "
+                f"Error: {e}"
+            )
+    else:
+        # Development: Use local credentials file
+        try:
+            return _load_credentials_local(client_id)
+        except Exception as e:
+            raise Exception(
+                f"Credentials for client {client_id} not found! "
+                f"Environment is '{environment}'. Please configure config/credentials.py "
+                f"with key 'client_{client_id}'. Error: {e}"
+            )
 
 
 # =============================================================================

@@ -24,7 +24,7 @@ from alpaca.trading.requests import GetCalendarRequest
 from deltadyno.config.database import DatabaseConfigLoader
 from deltadyno.config.loader import ConfigLoader
 from deltadyno.trading.position_monitor import monitor_positions_and_close
-from deltadyno.utils.helpers import get_credentials, get_ssm_parameter
+from deltadyno.utils.helpers import get_credentials
 from deltadyno.utils.logger import setup_logger, update_logger_level
 
 
@@ -346,11 +346,9 @@ def run_equity_monitor(
         profile_id: Client profile ID
         log_to_console: If True, log to console instead of file
     """
-    # Fetch credentials from SSM
-    #api_key = get_ssm_parameter(f'profile{profile_id}_apikey')
-    #api_secret = get_ssm_parameter(f'profile{profile_id}_apisecret')
-
-    # Alternative: Use local credentials
+    # Get API credentials (uses environment setting from config.ini)
+    # - development: loads from config/credentials.py
+    # - production: loads from AWS SSM Parameter Store
     api_key, api_secret = get_credentials(profile_id)
 
     # Ensure logs directory exists
