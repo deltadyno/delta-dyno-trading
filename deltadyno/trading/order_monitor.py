@@ -434,16 +434,16 @@ def process_order(
     logger.debug(f"seconds_range: {seconds_range}")
 
     if not triggered_range:
-        print(f"Symbol: {symbol} - Qty {qty}, Age: {age_seconds}s has not met first range {seconds_range}. Skipping")
-        logger.info(f"Symbol: {symbol} - Qty {qty}, Age: {age_seconds}s has not met first range {seconds_range}. Skipping")
+        print(f"Symbol: {symbol} - Qty {qty}, Age seconds {age_seconds} has not met the first range {seconds_range}. Skipping")
+        logger.info(f"Symbol: {symbol} - Qty {qty}, Age seconds {age_seconds} has not met the first range {seconds_range}. Skipping")
         print("\n")
         return None, time_age_spent
 
     # Already processed in this range
-    # Match old implementation: check if symbol exists before accessing
+    # Match old implementation: check if symbol exists before accessing (line 539)
     if symbol in first_time_sales and seconds_range == first_time_sales[symbol]:
-        print(f"Symbol: {symbol} - Qty {qty}, Age: {age_seconds}s. Already processed in range {seconds_range}. Skipping")
-        logger.info(f"Symbol: {symbol} - Qty {qty}, Age: {age_seconds}s. Already processed in range {seconds_range}. Skipping")
+        print(f"Symbol: {symbol} - Qty {qty}, Age seconds : {age_seconds}. Already sold in this range {seconds_range}. Skipping")
+        logger.info(f"Symbol: {symbol} - Qty {qty}, Age seconds : {age_seconds}. Already sold in this range {seconds_range}. Skipping")
         print("\n")
         return None, time_age_spent
 
@@ -453,18 +453,17 @@ def process_order(
     if symbol in first_time_sales:
         prev_seconds_range = first_time_sales[symbol]
         del first_time_sales[symbol]
-    if symbol in first_time_sales:
-        del first_time_sales[symbol]
 
-    logger.debug(f"prev_seconds_range: {prev_seconds_range}")
-    first_time_sales[symbol] = seconds_range
+    logger.debug(f"prev_seconds_range : {prev_seconds_range}")
+    first_time_sales[symbol] = seconds_range  # Track canceled quantity
 
     # Fetch latest option quote
+    # Match old implementation: parameter order is (client, symbol, logger)
     current_price = fetch_latest_option_quote(option_client, symbol, logger)
 
     if current_price is None:
-        print(f"Symbol: {symbol}: qty {qty} skipping (current price is None)")
-        logger.info(f"Symbol: {symbol}: qty {qty} skipping (current price is None)")
+        print(f"Symbol: {symbol}: qty {qty} skipping because current price fetched is None.")
+        logger.info(f"Symbol: {symbol}: qty {qty} skipping because current price fetched is None.")
         return None, time_age_spent
 
     price_diff = round(abs(current_price - canceled_price), 3)
@@ -518,6 +517,7 @@ def _handle_within_threshold(
     """Handle order when price difference is within threshold."""
     logger.debug("Price diff is less than threshold configured")
     cancelled_order_id = None
+    create_sell_qty = 0
 
     if int(qty) == 1:
         # Single quantity - cancel entire order
