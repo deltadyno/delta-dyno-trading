@@ -96,24 +96,56 @@ class DatabaseConfigLoader:
         Returns:
             Active database connection, or None on error
         """
-        try:
-            if not self.db_connection or not self.db_connection.is_connected():
-                print("Re-establishing lost DB connection...")
-                self.db_connection = self._create_connection()
-            return self.db_connection
-        except Exception as e:
-            print(f"Error while getting DB connection: {e}")
-            return None
+        with self.lock:
+            try:
+                if self.db_connection is None or not self.db_connection.is_connected():
+                    print("Re-establishing lost DB connection...")
+                    # Close old connection if it exists
+                    if self.db_connection is not None:
+                        try:
+                            self.db_connection.close()
+                        except Exception:
+                            pass
+                    self.db_connection = self._create_connection()
+                return self.db_connection
+            except Exception as e:
+                print(f"Error while getting DB connection: {e}")
+                return None
 
     def close_connection(self) -> None:
         """Close the database connection if open."""
-        if self.db_connection and self.db_connection.is_connected():
-            self.db_connection.close()
+        with self.lock:
+            if self.db_connection is not None:
+                try:
+                    if self.db_connection.is_connected():
+                        self.db_connection.close()
+                except Exception:
+                    pass  # Ignore errors when closing
+                finally:
+                    self.db_connection = None
 
     def _ensure_connection(self) -> None:
         """Ensure database connection is active."""
-        if not self.db_connection.is_connected():
-            self.db_connection = self._create_connection()
+        with self.lock:
+            try:
+                if self.db_connection is None or not self.db_connection.is_connected():
+                    # Close old connection if it exists
+                    if self.db_connection is not None:
+                        try:
+                            self.db_connection.close()
+                        except Exception:
+                            pass  # Ignore errors when closing old connection
+                    # Create new connection
+                    self.db_connection = self._create_connection()
+            except Exception as e:
+                print(f"Error ensuring connection: {e}")
+                # Try to create a fresh connection
+                try:
+                    if self.db_connection is not None:
+                        self.db_connection.close()
+                except Exception:
+                    pass
+                self.db_connection = self._create_connection()
 
     # =========================================================================
     # Configuration Loading
@@ -124,13 +156,22 @@ class DatabaseConfigLoader:
         print("Fetching configuration data from database...")
 
         max_retries = 3
+        cursor = None
+        
         for attempt in range(max_retries):
             try:
                 self._ensure_connection()
+                
+                # Get connection reference within lock
+                with self.lock:
+                    if self.db_connection is None or not self.db_connection.is_connected():
+                        continue  # Skip this attempt if connection is bad
+                    
+                    # Create cursor and fetch data within the lock
+                    cursor = self.db_connection.cursor(dictionary=True)
+                    self.db_connection.commit()  # Ensure fresh data
 
-                cursor = self.db_connection.cursor(dictionary=True)
-                self.db_connection.commit()  # Ensure fresh data
-
+                # Process data outside lock to avoid holding it too long
                 new_config_data: Dict[str, Any] = {}
 
                 for table in self.tables:
@@ -153,8 +194,15 @@ class DatabaseConfigLoader:
                             else:
                                 print(f"Skipping table {table}, missing required columns.")
 
-                cursor.close()
+                # Close cursor
+                if cursor:
+                    try:
+                        cursor.close()
+                    except Exception:
+                        pass
+                    cursor = None
 
+                # Update config data
                 if new_config_data:
                     with self.lock:
                         self.config_data = new_config_data
@@ -164,6 +212,28 @@ class DatabaseConfigLoader:
 
             except Exception as e:
                 print(f"Error fetching config data: {e}. Retrying {attempt + 1}/{max_retries}...")
+                # Clean up cursor
+                if cursor:
+                    try:
+                        cursor.close()
+                    except Exception:
+                        pass
+                    cursor = None
+                # Reset connection on error
+                with self.lock:
+                    try:
+                        if self.db_connection is not None:
+                            self.db_connection.close()
+                    except Exception:
+                        pass
+                    self.db_connection = None
+
+        # Final cleanup
+        if cursor:
+            try:
+                cursor.close()
+            except Exception:
+                pass
 
         if not self.config_data:
             print("Critical: Failed to fetch config data. Using last known values.")
