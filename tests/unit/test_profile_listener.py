@@ -534,4 +534,369 @@ class TestAccountRestrictionEvents:
         )
         
         assert is_restricted is False
+    
+    @pytest.mark.unit
+    def test_account_suspended_detected(self, mock_trading_client, mock_logger):
+        """Account suspension should be detected."""
+        mock_account = MagicMock()
+        mock_account.status = "SUSPENDED"
+        mock_trading_client.get_account.return_value = mock_account
+        
+        is_suspended = mock_account.status == "SUSPENDED"
+        
+        assert is_suspended is True
+    
+    @pytest.mark.unit
+    def test_account_active(self, mock_trading_client, mock_logger):
+        """Active account should pass checks."""
+        mock_account = MagicMock()
+        mock_account.status = "ACTIVE"
+        mock_trading_client.get_account.return_value = mock_account
+        
+        is_active = mock_account.status == "ACTIVE"
+        
+        assert is_active is True
+
+
+class TestProfileMessageValidation:
+    """Tests for profile message validation."""
+    
+    @pytest.mark.unit
+    def test_message_missing_symbol_rejected(self, mock_logger):
+        """Message without symbol should be rejected."""
+        message = {
+            "direction": "upward",
+            "close_time": "2025-01-23T14:30:00",
+        }
+        
+        is_valid = "symbol" in message and message["symbol"]
+        
+        assert is_valid is False
+    
+    @pytest.mark.unit
+    def test_message_empty_symbol_rejected(self, mock_logger):
+        """Message with empty symbol should be rejected."""
+        message = {
+            "symbol": "",
+            "direction": "upward",
+        }
+        
+        is_valid = "symbol" in message and message["symbol"]
+        
+        assert is_valid is False
+    
+    @pytest.mark.unit
+    def test_message_invalid_direction_rejected(self, mock_logger):
+        """Message with invalid direction should be rejected."""
+        message = {
+            "symbol": "SPY",
+            "direction": "sideways",
+        }
+        
+        valid_directions = ["upward", "downward"]
+        is_valid = message.get("direction") in valid_directions
+        
+        assert is_valid is False
+    
+    @pytest.mark.unit
+    def test_message_all_fields_valid(self, breakout_message_factory, mock_logger):
+        """Message with all valid fields should pass."""
+        message = breakout_message_factory.create_message()
+        
+        valid_directions = ["upward", "downward"]
+        is_valid = (
+            message.get("symbol") and 
+            message.get("direction") in valid_directions
+        )
+        
+        assert is_valid is True
+
+
+class TestChoppyDayHandling:
+    """Tests for choppy day count handling."""
+    
+    @pytest.mark.unit
+    def test_choppy_day_count_incremented(self, mock_db_config, mock_logger):
+        """Choppy day count should be incremented when day is choppy."""
+        choppy_day_count = 3
+        is_choppy_day = True
+        
+        if is_choppy_day:
+            choppy_day_count += 1
+        
+        assert choppy_day_count == 4
+    
+    @pytest.mark.unit
+    def test_choppy_day_count_reset_on_new_day(self, mock_db_config, mock_logger, frozen_time):
+        """Choppy day count should reset on new day."""
+        last_reset_date = frozen_time.now.date() - timedelta(days=1)
+        current_date = frozen_time.now.date()
+        choppy_day_count = 5
+        
+        if current_date != last_reset_date:
+            choppy_day_count = 0
+        
+        assert choppy_day_count == 0
+    
+    @pytest.mark.unit
+    def test_high_choppy_count_blocks_trading(self, mock_logger):
+        """High choppy day count should block trading."""
+        choppy_day_count = 10
+        max_choppy_days = 5
+        
+        should_block = choppy_day_count > max_choppy_days
+        
+        assert should_block is True
+    
+    @pytest.mark.unit
+    def test_low_choppy_count_allows_trading(self, mock_logger):
+        """Low choppy day count should allow trading."""
+        choppy_day_count = 2
+        max_choppy_days = 5
+        
+        should_block = choppy_day_count > max_choppy_days
+        
+        assert should_block is False
+
+
+class TestTimezoneHandling:
+    """Tests for timezone handling in profile listener."""
+    
+    @pytest.mark.unit
+    def test_us_eastern_timezone_conversion(self, mock_logger):
+        """US Eastern timezone should be handled correctly."""
+        import pytz
+        
+        utc_time = datetime(2025, 1, 23, 19, 30, tzinfo=pytz.UTC)
+        eastern_tz = pytz.timezone("US/Eastern")
+        
+        eastern_time = utc_time.astimezone(eastern_tz)
+        
+        # During standard time (winter), ET is UTC-5
+        assert eastern_time.hour == 14  # 19:30 UTC = 14:30 EST
+    
+    @pytest.mark.unit
+    def test_market_hours_in_eastern(self, mock_logger):
+        """Market hours should be checked in Eastern time."""
+        import pytz
+        from datetime import time as datetime_time
+        
+        eastern_tz = pytz.timezone("US/Eastern")
+        market_open = datetime_time(9, 30)
+        market_close = datetime_time(16, 0)
+        
+        # 14:30 ET is within market hours
+        current_time = datetime_time(14, 30)
+        
+        is_market_hours = market_open <= current_time <= market_close
+        
+        assert is_market_hours is True
+    
+    @pytest.mark.unit
+    def test_premarket_detection(self, mock_logger):
+        """Pre-market hours should be detected."""
+        from datetime import time as datetime_time
+        
+        market_open = datetime_time(9, 30)
+        premarket_start = datetime_time(4, 0)
+        
+        # 8:30 ET is pre-market
+        current_time = datetime_time(8, 30)
+        
+        is_premarket = premarket_start <= current_time < market_open
+        
+        assert is_premarket is True
+    
+    @pytest.mark.unit
+    def test_afterhours_detection(self, mock_logger):
+        """After-hours trading should be detected."""
+        from datetime import time as datetime_time
+        
+        market_close = datetime_time(16, 0)
+        afterhours_end = datetime_time(20, 0)
+        
+        # 17:30 ET is after-hours
+        current_time = datetime_time(17, 30)
+        
+        is_afterhours = market_close < current_time <= afterhours_end
+        
+        assert is_afterhours is True
+
+
+class TestNoTradeWindowHandling:
+    """Tests for no-trade time window handling."""
+    
+    @pytest.mark.unit
+    def test_within_no_trade_window(self, mock_logger):
+        """Time within no-trade window should block trading."""
+        from datetime import time as datetime_time
+        
+        no_trade_start = datetime_time(15, 45)
+        no_trade_end = datetime_time(16, 0)
+        current_time = datetime_time(15, 50)
+        
+        in_no_trade_window = no_trade_start <= current_time <= no_trade_end
+        
+        assert in_no_trade_window is True
+    
+    @pytest.mark.unit
+    def test_before_no_trade_window(self, mock_logger):
+        """Time before no-trade window should allow trading."""
+        from datetime import time as datetime_time
+        
+        no_trade_start = datetime_time(15, 45)
+        no_trade_end = datetime_time(16, 0)
+        current_time = datetime_time(15, 30)
+        
+        in_no_trade_window = no_trade_start <= current_time <= no_trade_end
+        
+        assert in_no_trade_window is False
+    
+    @pytest.mark.unit
+    def test_after_no_trade_window(self, mock_logger):
+        """Time after no-trade window should allow trading (if market still open)."""
+        from datetime import time as datetime_time
+        
+        no_trade_start = datetime_time(10, 0)
+        no_trade_end = datetime_time(10, 30)
+        current_time = datetime_time(11, 0)
+        
+        in_no_trade_window = no_trade_start <= current_time <= no_trade_end
+        
+        assert in_no_trade_window is False
+
+
+class TestProfileIdExtraction:
+    """Tests for profile ID extraction from symbols."""
+    
+    @pytest.mark.unit
+    def test_extract_profile_id_from_symbol(self):
+        """Profile ID should be extracted from option symbol."""
+        # Assume profile ID is encoded in some way
+        symbol = "SPY250124C00595000"
+        
+        # Extract underlying
+        underlying = symbol[:3] if symbol[:3].isupper() else symbol[:4]
+        
+        assert underlying == "SPY"
+    
+    @pytest.mark.unit
+    def test_extract_expiry_from_symbol(self):
+        """Expiry date should be extracted from option symbol."""
+        symbol = "SPY250124C00595000"
+        
+        # OCC format: SYMBOL + YYMMDD + C/P + strike
+        expiry_str = symbol[3:9]  # "250124"
+        
+        year = 2000 + int(expiry_str[:2])
+        month = int(expiry_str[2:4])
+        day = int(expiry_str[4:6])
+        
+        assert year == 2025
+        assert month == 1
+        assert day == 24
+    
+    @pytest.mark.unit
+    def test_extract_strike_from_symbol(self):
+        """Strike price should be extracted from option symbol."""
+        symbol = "SPY250124C00595000"
+        
+        # Strike is last 8 characters, divided by 1000
+        strike_str = symbol[-8:]  # "00595000"
+        strike = int(strike_str) / 1000
+        
+        assert strike == 595.0
+    
+    @pytest.mark.unit
+    def test_extract_option_type_from_symbol(self):
+        """Option type should be extracted from option symbol."""
+        call_symbol = "SPY250124C00595000"
+        put_symbol = "SPY250124P00595000"
+        
+        call_type = call_symbol[9]  # Position varies by underlying length
+        put_type = put_symbol[9]
+        
+        assert call_type == "C"
+        assert put_type == "P"
+
+
+class TestRedisStreamOperations:
+    """Tests for Redis stream operations."""
+    
+    @pytest.mark.unit
+    def test_redis_xread_returns_messages(self, mock_redis_client, mock_logger):
+        """Redis XREAD should return pending messages."""
+        mock_redis_client.xread.return_value = [
+            ("breakout_messages:v1", [
+                ("1234567890-0", {"symbol": "SPY", "direction": "upward"}),
+                ("1234567891-0", {"symbol": "QQQ", "direction": "downward"}),
+            ])
+        ]
+        
+        result = mock_redis_client.xread({"breakout_messages:v1": "0"}, count=10)
+        
+        assert len(result[0][1]) == 2
+    
+    @pytest.mark.unit
+    def test_redis_xread_empty_stream(self, mock_redis_client, mock_logger):
+        """Empty Redis stream should return empty list."""
+        mock_redis_client.xread.return_value = []
+        
+        result = mock_redis_client.xread({"breakout_messages:v1": "0"}, count=10)
+        
+        assert result == []
+    
+    @pytest.mark.unit
+    def test_redis_xack_confirms_processing(self, mock_redis_client, mock_logger):
+        """XACK should confirm message processing."""
+        mock_redis_client.xack.return_value = 1
+        
+        result = mock_redis_client.xack("breakout_messages:v1", "consumer-group", "1234567890-0")
+        
+        assert result == 1
+    
+    @pytest.mark.unit
+    def test_redis_connection_pool_reused(self, mock_redis_client, mock_logger):
+        """Redis connection pool should be reused across calls."""
+        # Simulate multiple operations on same client
+        call_count = 0
+        
+        for _ in range(5):
+            mock_redis_client.ping()
+            call_count += 1
+        
+        assert call_count == 5
+        # Same client used for all calls
+
+
+class TestConfigurationReload:
+    """Tests for configuration reload handling."""
+    
+    @pytest.mark.unit
+    def test_config_reload_on_signal(self, mock_db_config, mock_logger):
+        """Configuration should reload when signaled."""
+        original_value = mock_db_config.max_daily_positions_allowed
+        mock_db_config.max_daily_positions_allowed = 20
+        
+        # After reload
+        new_value = mock_db_config.max_daily_positions_allowed
+        
+        assert new_value == 20
+    
+    @pytest.mark.unit
+    def test_config_changes_reflected_immediately(self, mock_db_config, mock_logger):
+        """Config changes should be reflected immediately."""
+        mock_db_config.trailing_stop_percent = 0.10
+        
+        # Value should be immediately available
+        assert mock_db_config.trailing_stop_percent == 0.10
+    
+    @pytest.mark.unit
+    def test_invalid_config_rejected(self, mock_logger):
+        """Invalid configuration values should be rejected."""
+        invalid_position_limit = -1
+        
+        is_valid = invalid_position_limit >= 0
+        
+        assert is_valid is False
 

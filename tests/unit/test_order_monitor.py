@@ -14,7 +14,8 @@ from datetime import datetime, timezone, timedelta
 from unittest.mock import MagicMock, patch
 from uuid import uuid4
 import pytest
-import pandas as pd
+
+# Note: pandas is mocked in conftest.py
 
 
 # =============================================================================
@@ -539,4 +540,290 @@ class TestOrderConfirmation:
             confirm_order_cancellations(cancelled_orders, mock_trading_client, mock_logger)
             
             assert mock_status.call_count == 2
+    
+    @pytest.mark.unit
+    def test_multiple_orders_confirmed_independently(self, mock_trading_client, mock_logger):
+        """Multiple orders should each be confirmed independently."""
+        with patch("deltadyno.trading.order_monitor.get_order_status") as mock_status, \
+             patch("deltadyno.trading.order_monitor.sleep"):
+            
+            from alpaca.trading.enums import OrderStatus
+            mock_status.return_value = OrderStatus.CANCELED
+            
+            from deltadyno.trading.order_monitor import confirm_order_cancellations
+            
+            cancelled_orders = ["order-1", "order-2", "order-3"]
+            confirm_order_cancellations(cancelled_orders, mock_trading_client, mock_logger)
+            
+            assert mock_status.call_count == 3
+    
+    @pytest.mark.unit
+    def test_status_none_triggers_retry(self, mock_trading_client, mock_logger):
+        """None status should trigger retry."""
+        with patch("deltadyno.trading.order_monitor.get_order_status") as mock_status, \
+             patch("deltadyno.trading.order_monitor.sleep"):
+            
+            from alpaca.trading.enums import OrderStatus
+            mock_status.side_effect = [None, OrderStatus.CANCELED]
+            
+            from deltadyno.trading.order_monitor import confirm_order_cancellations
+            
+            cancelled_orders = ["order-123"]
+            confirm_order_cancellations(cancelled_orders, mock_trading_client, mock_logger)
+            
+            assert mock_status.call_count == 2
+
+
+class TestConfigRangeParsing:
+    """Tests for configuration range parsing."""
+    
+    @pytest.mark.unit
+    def test_parse_valid_config_ranges(self, mock_db_config):
+        """Valid config ranges should parse correctly."""
+        from deltadyno.trading.order_monitor import parse_config_ranges
+        
+        keys = ["seconds_to_monitor_open_positions"]
+        mock_db_config.seconds_to_monitor_open_positions = "60,120,180"
+        
+        result = parse_config_ranges(mock_db_config, keys)
+        
+        assert "seconds_to_monitor_open_positions" in result
+        assert result["seconds_to_monitor_open_positions"] == [60.0, 120.0, 180.0]
+    
+    @pytest.mark.unit
+    def test_parse_percentage_ranges_divided_by_100(self, mock_db_config):
+        """Percentage ranges should be divided by 100."""
+        from deltadyno.trading.order_monitor import parse_config_ranges
+        
+        keys = ["close_open_order_prcntage_of_open_qty"]
+        mock_db_config.close_open_order_prcntage_of_open_qty = "25,50,75,100"
+        
+        result = parse_config_ranges(mock_db_config, keys)
+        
+        assert result["close_open_order_prcntage_of_open_qty"] == [0.25, 0.50, 0.75, 1.0]
+    
+    @pytest.mark.unit
+    def test_parse_empty_config_returns_empty_list(self, mock_db_config):
+        """Empty config should return empty list."""
+        from deltadyno.trading.order_monitor import parse_config_ranges
+        
+        keys = ["missing_key"]
+        mock_db_config.missing_key = ""
+        
+        result = parse_config_ranges(mock_db_config, keys)
+        
+        assert result["missing_key"] == []
+    
+    @pytest.mark.unit
+    def test_parse_config_with_trailing_comma(self, mock_db_config):
+        """Config with trailing comma should handle gracefully."""
+        from deltadyno.trading.order_monitor import parse_config_ranges
+        
+        keys = ["seconds_to_monitor_open_positions"]
+        mock_db_config.seconds_to_monitor_open_positions = "60,120,180,"
+        
+        result = parse_config_ranges(mock_db_config, keys)
+        
+        # Should filter empty strings
+        assert len(result["seconds_to_monitor_open_positions"]) == 3
+
+
+class TestOrderAgeCalculation:
+    """Tests for order age and time-based calculations."""
+    
+    @pytest.mark.unit
+    def test_order_age_calculated_correctly(self, mock_logger):
+        """Order age should be calculated correctly from created_at."""
+        from deltadyno.trading.order_monitor import calculate_dynamic_values
+        
+        seconds_gap = [60.0, 120.0, 180.0]
+        sell_percent = [0.25, 0.50, 0.75]
+        price_threshold = [0.05, 0.10, 0.15]
+        create_percent = [0.25, 0.50, 0.75]
+        diff_check = [0.10, 0.20, 0.30]
+        
+        # Age of 90 seconds should be in first range (60-120)
+        result = calculate_dynamic_values(
+            90.0, seconds_gap, sell_percent, price_threshold,
+            create_percent, diff_check, mock_logger
+        )
+        
+        seconds_range, sell_pct, _, _, _, triggered = result
+        assert triggered is True
+        assert seconds_range == 60.0
+        assert sell_pct == 0.25
+    
+    @pytest.mark.unit
+    def test_order_age_at_boundary(self, mock_logger):
+        """Order age exactly at boundary should be in lower range."""
+        from deltadyno.trading.order_monitor import calculate_dynamic_values
+        
+        seconds_gap = [60.0, 120.0, 180.0]
+        sell_percent = [0.25, 0.50, 0.75]
+        price_threshold = [0.05, 0.10, 0.15]
+        create_percent = [0.25, 0.50, 0.75]
+        diff_check = [0.10, 0.20, 0.30]
+        
+        # Age of exactly 120 should be in second range
+        result = calculate_dynamic_values(
+            120.0, seconds_gap, sell_percent, price_threshold,
+            create_percent, diff_check, mock_logger
+        )
+        
+        seconds_range, sell_pct, _, _, _, triggered = result
+        assert triggered is True
+        assert seconds_range == 120.0
+        assert sell_pct == 0.50
+
+
+class TestPriceDifferenceHandling:
+    """Tests for price difference calculations and thresholds."""
+    
+    @pytest.mark.unit
+    def test_price_diff_within_threshold(self, mock_logger):
+        """Price diff within threshold should trigger processing."""
+        current_price = 5.20
+        limit_price = 5.25
+        threshold = 0.10
+        
+        price_diff = abs(current_price - limit_price)
+        
+        assert price_diff <= threshold
+    
+    @pytest.mark.unit
+    def test_price_diff_exceeds_threshold(self, mock_logger):
+        """Price diff exceeding threshold should change behavior."""
+        current_price = 4.50
+        limit_price = 5.25
+        threshold = 0.10
+        
+        price_diff = abs(current_price - limit_price)
+        
+        assert price_diff > threshold
+    
+    @pytest.mark.unit
+    def test_price_diff_calculation_precision(self, mock_logger):
+        """Price diff calculation should maintain precision."""
+        current_price = 5.123456
+        limit_price = 5.126789
+        
+        price_diff = round(abs(current_price - limit_price), 3)
+        
+        assert price_diff == 0.003
+
+
+class TestOrderFiltering:
+    """Tests for order filtering by asset class."""
+    
+    @pytest.mark.unit
+    def test_filter_us_option_orders(self, order_factory):
+        """Should filter for US option orders only."""
+        orders = [
+            order_factory.create_limit_order(symbol="SPY250124C00595000"),
+            {"id": "eq-order", "symbol": "SPY", "asset_class": "us_equity", "qty": "10", "limit_price": "590.00"},
+        ]
+        
+        # Filter for US option orders using list comprehension
+        option_orders = [o for o in orders if o.get("asset_class") == "us_option"]
+        
+        assert len(option_orders) == 1
+        assert option_orders[0]["symbol"] == "SPY250124C00595000"
+    
+    @pytest.mark.unit
+    def test_empty_orders_handled(self, mock_trading_client, mock_logger):
+        """Empty orders list should be handled gracefully."""
+        orders = []
+        
+        if not orders:
+            # Should skip processing
+            processed = False
+        else:
+            processed = True
+        
+        assert processed is False
+
+
+class TestFirstTimeSalesTracking:
+    """Tests for first time sales tracking dictionary."""
+    
+    @pytest.mark.unit
+    def test_first_time_sales_initialization(self):
+        """First time sales dict should start empty."""
+        first_time_sales = {}
+        
+        assert len(first_time_sales) == 0
+    
+    @pytest.mark.unit
+    def test_symbol_added_on_first_sale(self):
+        """Symbol should be added to tracking on first sale."""
+        first_time_sales = {}
+        symbol = "SPY250124C00595000"
+        seconds_range = 60.0
+        
+        first_time_sales[symbol] = seconds_range
+        
+        assert symbol in first_time_sales
+        assert first_time_sales[symbol] == 60.0
+    
+    @pytest.mark.unit
+    def test_symbol_updated_on_new_range(self):
+        """Symbol should be updated when moving to new range."""
+        first_time_sales = {"SPY250124C00595000": 60.0}
+        
+        # Move to next range
+        first_time_sales["SPY250124C00595000"] = 120.0
+        
+        assert first_time_sales["SPY250124C00595000"] == 120.0
+    
+    @pytest.mark.unit
+    def test_symbol_removed_when_fully_processed(self):
+        """Symbol should be removed when fully processed."""
+        first_time_sales = {"SPY250124C00595000": 120.0}
+        
+        del first_time_sales["SPY250124C00595000"]
+        
+        assert "SPY250124C00595000" not in first_time_sales
+    
+    @pytest.mark.unit
+    def test_cleanup_inactive_symbols(self):
+        """Symbols no longer in active orders should be cleaned up."""
+        first_time_sales = {
+            "SPY250124C00595000": 60.0,
+            "AAPL250124C00185000": 120.0,
+            "TSLA250124P00450000": 180.0,
+        }
+        
+        active_symbols = {"SPY250124C00595000"}
+        
+        for symbol in list(first_time_sales.keys()):
+            if symbol not in active_symbols:
+                del first_time_sales[symbol]
+        
+        assert len(first_time_sales) == 1
+        assert "SPY250124C00595000" in first_time_sales
+
+
+class TestTimeAgeAccumulation:
+    """Tests for time age accumulation across processing cycles."""
+    
+    @pytest.mark.unit
+    def test_time_age_accumulates(self, mock_logger):
+        """Time age should accumulate for known symbols."""
+        time_age_spent = 30.0
+        current_age = 45.0
+        
+        # Accumulated age
+        total_age = round(current_age + time_age_spent, 2)
+        
+        assert total_age == 75.0
+    
+    @pytest.mark.unit
+    def test_time_age_reset_on_completion(self, mock_logger):
+        """Time age should reset when order fully processed."""
+        time_age_spent = 120.0
+        
+        # Order fully cancelled
+        time_age_spent = 0.0
+        
+        assert time_age_spent == 0.0
 

@@ -8,11 +8,79 @@ Provides:
 - Database configuration mocks
 """
 
+import sys
 from datetime import datetime, timezone, timedelta, time as datetime_time
 from typing import Any, Dict, List, Optional
 from unittest.mock import MagicMock, AsyncMock, patch
 from uuid import uuid4
 import pytest
+
+# =============================================================================
+# Mock Module Imports
+# =============================================================================
+# Create mock modules for dependencies that may not be installed
+# This allows tests to run without full project dependencies
+
+mock_modules = [
+    'alpaca',
+    'alpaca.trading',
+    'alpaca.trading.client',
+    'alpaca.trading.enums',
+    'alpaca.trading.requests',
+    'alpaca.data',
+    'alpaca.data.historical',
+    'alpaca.data.historical.option',
+    'alpaca.data.live',
+    'alpaca.data.live.option',
+    'redis',
+    'mysql',
+    'mysql.connector',
+    'pandas',
+    'talib',
+    'boto3',
+    'requests',
+    'requests.exceptions',
+]
+
+for mod_name in mock_modules:
+    if mod_name not in sys.modules:
+        sys.modules[mod_name] = MagicMock()
+
+# Create specific mock for OrderStatus enum
+class MockOrderStatus:
+    PENDING_NEW = "pending_new"
+    ACCEPTED = "accepted"
+    NEW = "new"
+    PARTIALLY_FILLED = "partially_filled"
+    FILLED = "filled"
+    CANCELED = "canceled"
+    EXPIRED = "expired"
+    REJECTED = "rejected"
+    PENDING_CANCEL = "pending_cancel"
+    PENDING_REPLACE = "pending_replace"
+
+sys.modules['alpaca.trading.enums'].OrderStatus = MockOrderStatus
+
+# Mock mysql.connector properly
+mysql_mock = MagicMock()
+mysql_mock.connector = MagicMock()
+sys.modules['mysql'] = mysql_mock
+sys.modules['mysql.connector'] = mysql_mock.connector
+
+# Don't mock pytz - it's a standard library and might be installed
+# Let tests that need it import it directly
+
+# Mock requests.exceptions
+class MockTimeout(Exception):
+    pass
+
+class MockConnectionError(Exception):
+    pass
+
+requests_exceptions = MagicMock()
+requests_exceptions.Timeout = MockTimeout
+requests_exceptions.ConnectionError = MockConnectionError
+sys.modules['requests.exceptions'] = requests_exceptions
 
 
 # =============================================================================

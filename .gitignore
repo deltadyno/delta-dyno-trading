@@ -169,3 +169,8 @@ data/
 *.pem
 *.key
 
+# Test reports
+reports/
+*.html
+junit_*.xml
+

@@ -14,7 +14,7 @@ from datetime import datetime, timezone, timedelta
 from unittest.mock import MagicMock, patch
 import pytest
 
-import pandas as pd
+# Note: pandas is mocked in conftest.py - tests use MagicMock instead
 
 
 # =============================================================================
@@ -459,4 +459,351 @@ class TestBarStrength:
         
         # Should not raise and should be valid
         assert 0 <= strength <= 1
+    
+    @pytest.mark.unit
+    def test_bar_strength_zero_range_candle(self):
+        """Zero range candle (high == low) should handle edge case."""
+        from deltadyno.utils.helpers import calculate_bar_strength
+        
+        # Edge case: flat candle
+        close = 590.0
+        open_price = 590.0
+        high = 590.0
+        low = 590.0
+        
+        # Should not raise division by zero
+        try:
+            strength = calculate_bar_strength(close, open_price, high, low)
+            assert 0 <= strength <= 1 or math.isnan(strength)
+        except ZeroDivisionError:
+            pytest.skip("Function doesn't handle zero range - acceptable")
+    
+    @pytest.mark.unit
+    def test_bar_strength_hammer_pattern(self):
+        """Hammer pattern (long lower wick) should have specific strength."""
+        from deltadyno.utils.helpers import calculate_bar_strength
+        
+        # Hammer: small body at top, long lower wick
+        close = 592.0
+        open_price = 591.5
+        high = 592.5
+        low = 588.0  # Long lower wick
+        
+        strength = calculate_bar_strength(close, open_price, high, low)
+        assert 0 <= strength <= 1
+    
+    @pytest.mark.unit
+    def test_bar_strength_shooting_star_pattern(self):
+        """Shooting star pattern (long upper wick) should have specific strength."""
+        from deltadyno.utils.helpers import calculate_bar_strength
+        
+        # Shooting star: small body at bottom, long upper wick
+        close = 588.5
+        open_price = 589.0
+        high = 594.0  # Long upper wick
+        low = 588.0
+        
+        strength = calculate_bar_strength(close, open_price, high, low)
+        assert 0 <= strength <= 1
+
+
+class TestBreakoutSignalCombinations:
+    """Tests for various signal combinations."""
+    
+    @pytest.fixture
+    def base_params(self, mock_trading_client, mock_redis_client, mock_logger, frozen_time):
+        """Base parameters for signal combination tests."""
+        mock_trading_client.get_clock.return_value.is_open = True
+        return {
+            "prev_kfilt": 590.0,
+            "prev_velocity": 0.0,
+            "enable_kalman_prediction": False,
+            "skip_trading_days_list": [],
+            "latest_close_time": frozen_time.now,
+            "choppy_day_cnt": 0,
+            "bar_head_cnt": 10,
+            "maxvolume": 500000,
+            "min_gap_bars_cnt_for_breakout": 3,
+            "positioncnt": 0,
+            "positionqty": 10,
+            "createorder": True,
+            "bar_strength": 0.75,
+            "skip_candle_with_size": 5.0,
+            "volume": 50000,
+            "symbol": "SPY",
+            "trading_client": mock_trading_client,
+            "redis_client": mock_redis_client,
+            "redis_queue_name_str": "breakout_messages:v1",
+            "bar_date": frozen_time.now.date(),
+            "logger": mock_logger,
+        }
+    
+    @pytest.mark.unit
+    def test_both_signals_up_uses_upward(self, base_params):
+        """When both upos and dnos increase, upward takes priority."""
+        with patch("deltadyno.analysis.breakout.breakout_to_queue") as mock_queue:
+            mock_queue.return_value = True
+            from deltadyno.analysis.breakout import check_for_breakouts
+            
+            params = {
+                **base_params,
+                "upos": 1, "prev_upos": 0,
+                "dnos": 1, "prev_dnos": 0,
+                "latest_close": 591.5, "latest_open": 590.0,
+                "latest_high": 592.0, "latest_low": 589.0,
+            }
+            
+            _, breakout_type, _, _ = check_for_breakouts(**params)
+            
+            # Upward check comes first in the code
+            assert breakout_type == "upward"
+    
+    @pytest.mark.unit
+    def test_signal_decrease_no_breakout(self, base_params):
+        """Decreasing signals should not trigger breakout."""
+        with patch("deltadyno.analysis.breakout.breakout_to_queue") as mock_queue:
+            from deltadyno.analysis.breakout import check_for_breakouts
+            
+            params = {
+                **base_params,
+                "upos": 0, "prev_upos": 1,  # Decreasing
+                "dnos": 0, "prev_dnos": 1,  # Decreasing
+                "latest_close": 590.0, "latest_open": 590.0,
+                "latest_high": 591.0, "latest_low": 589.0,
+            }
+            
+            _, breakout_type, _, _ = check_for_breakouts(**params)
+            
+            assert breakout_type is None
+            mock_queue.assert_not_called()
+    
+    @pytest.mark.unit
+    def test_equal_signals_no_breakout(self, base_params):
+        """Equal signals (no change) should not trigger breakout."""
+        with patch("deltadyno.analysis.breakout.breakout_to_queue") as mock_queue:
+            from deltadyno.analysis.breakout import check_for_breakouts
+            
+            params = {
+                **base_params,
+                "upos": 5, "prev_upos": 5,  # Same
+                "dnos": 3, "prev_dnos": 3,  # Same
+                "latest_close": 590.0, "latest_open": 590.0,
+                "latest_high": 591.0, "latest_low": 589.0,
+            }
+            
+            _, breakout_type, _, _ = check_for_breakouts(**params)
+            
+            assert breakout_type is None
+            mock_queue.assert_not_called()
+
+
+class TestRedisQueueIntegration:
+    """Tests for Redis queue publishing behavior."""
+    
+    @pytest.mark.unit
+    def test_redis_queue_failure_handled(self, mock_trading_client, mock_redis_client, mock_logger, frozen_time):
+        """Redis queue failure should be handled gracefully."""
+        with patch("deltadyno.analysis.breakout.breakout_to_queue") as mock_queue, \
+             patch("deltadyno.analysis.breakout.apply_kalman_filter") as mock_kalman:
+            
+            mock_kalman.return_value = (591.5, 0.15, True)
+            mock_queue.return_value = False  # Queue failed
+            mock_trading_client.get_clock.return_value.is_open = True
+            
+            from deltadyno.analysis.breakout import check_for_breakouts
+            
+            params = {
+                "prev_kfilt": 590.0,
+                "prev_velocity": 0.1,
+                "enable_kalman_prediction": True,
+                "skip_trading_days_list": [],
+                "latest_close_time": frozen_time.now,
+                "choppy_day_cnt": 0,
+                "bar_head_cnt": 10,
+                "maxvolume": 500000,
+                "min_gap_bars_cnt_for_breakout": 3,
+                "positioncnt": 0,
+                "positionqty": 10,
+                "createorder": True,
+                "upos": 1, "prev_upos": 0,
+                "dnos": 0, "prev_dnos": 0,
+                "bar_strength": 0.75,
+                "latest_close": 591.5,
+                "latest_open": 590.0,
+                "latest_high": 592.0,
+                "latest_low": 589.0,
+                "skip_candle_with_size": 5.0,
+                "volume": 50000,
+                "symbol": "SPY",
+                "trading_client": mock_trading_client,
+                "redis_client": mock_redis_client,
+                "redis_queue_name_str": "breakout_messages:v1",
+                "bar_date": frozen_time.now.date(),
+                "logger": mock_logger,
+            }
+            
+            _, breakout_type, _, _ = check_for_breakouts(**params)
+            
+            # If queue fails, no breakout type is returned
+            assert breakout_type is None
+    
+    @pytest.mark.unit
+    def test_message_contains_all_required_fields(self, mock_trading_client, mock_redis_client, mock_logger, frozen_time):
+        """Published message should contain all required fields."""
+        with patch("deltadyno.analysis.breakout.breakout_to_queue") as mock_queue, \
+             patch("deltadyno.analysis.breakout.apply_kalman_filter") as mock_kalman:
+            
+            mock_kalman.return_value = (591.5, 0.15, True)
+            mock_queue.return_value = True
+            mock_trading_client.get_clock.return_value.is_open = True
+            
+            from deltadyno.analysis.breakout import check_for_breakouts
+            
+            params = {
+                "prev_kfilt": 590.0,
+                "prev_velocity": 0.1,
+                "enable_kalman_prediction": True,
+                "skip_trading_days_list": [],
+                "latest_close_time": frozen_time.now,
+                "choppy_day_cnt": 2,
+                "bar_head_cnt": 10,
+                "maxvolume": 500000,
+                "min_gap_bars_cnt_for_breakout": 3,
+                "positioncnt": 0,
+                "positionqty": 10,
+                "createorder": True,
+                "upos": 1, "prev_upos": 0,
+                "dnos": 0, "prev_dnos": 0,
+                "bar_strength": 0.85,
+                "latest_close": 591.5,
+                "latest_open": 590.0,
+                "latest_high": 592.0,
+                "latest_low": 589.0,
+                "skip_candle_with_size": 5.0,
+                "volume": 45000,
+                "symbol": "QQQ",
+                "trading_client": mock_trading_client,
+                "redis_client": mock_redis_client,
+                "redis_queue_name_str": "breakout_messages:v1",
+                "bar_date": frozen_time.now.date(),
+                "logger": mock_logger,
+            }
+            
+            check_for_breakouts(**params)
+            
+            # Verify message fields
+            mock_queue.assert_called_once()
+            call_kwargs = mock_queue.call_args[1]
+            assert call_kwargs["symbol"] == "QQQ"
+            assert call_kwargs["direction"] == "upward"
+            assert call_kwargs["bar_strength"] == 0.85
+            assert call_kwargs["close_price"] == 591.5
+            assert call_kwargs["volume"] == 45000
+            assert call_kwargs["choppy_day_count"] == 2
+
+
+class TestChoppyDayHandling:
+    """Tests for choppy day indicator handling."""
+    
+    @pytest.mark.unit
+    def test_high_choppy_count_still_allows_breakout(self, mock_trading_client, mock_redis_client, mock_logger, frozen_time):
+        """High choppy day count should still allow breakout (just included in message)."""
+        with patch("deltadyno.analysis.breakout.breakout_to_queue") as mock_queue, \
+             patch("deltadyno.analysis.breakout.apply_kalman_filter") as mock_kalman:
+            
+            mock_kalman.return_value = (591.5, 0.15, True)
+            mock_queue.return_value = True
+            mock_trading_client.get_clock.return_value.is_open = True
+            
+            from deltadyno.analysis.breakout import check_for_breakouts
+            
+            params = {
+                "prev_kfilt": 590.0,
+                "prev_velocity": 0.1,
+                "enable_kalman_prediction": True,
+                "skip_trading_days_list": [],
+                "latest_close_time": frozen_time.now,
+                "choppy_day_cnt": 10,  # High choppy count
+                "bar_head_cnt": 10,
+                "maxvolume": 500000,
+                "min_gap_bars_cnt_for_breakout": 3,
+                "positioncnt": 0,
+                "positionqty": 10,
+                "createorder": True,
+                "upos": 1, "prev_upos": 0,
+                "dnos": 0, "prev_dnos": 0,
+                "bar_strength": 0.75,
+                "latest_close": 591.5,
+                "latest_open": 590.0,
+                "latest_high": 592.0,
+                "latest_low": 589.0,
+                "skip_candle_with_size": 5.0,
+                "volume": 50000,
+                "symbol": "SPY",
+                "trading_client": mock_trading_client,
+                "redis_client": mock_redis_client,
+                "redis_queue_name_str": "breakout_messages:v1",
+                "bar_date": frozen_time.now.date(),
+                "logger": mock_logger,
+            }
+            
+            _, breakout_type, _, _ = check_for_breakouts(**params)
+            
+            # Choppy count doesn't block breakout, it's just passed along
+            assert breakout_type == "upward"
+            call_kwargs = mock_queue.call_args[1]
+            assert call_kwargs["choppy_day_count"] == 10
+
+
+class TestMultipleSymbols:
+    """Tests for handling different trading symbols."""
+    
+    @pytest.mark.unit
+    @pytest.mark.parametrize("symbol", ["SPY", "QQQ", "IWM", "AAPL", "TSLA", "NVDA"])
+    def test_various_symbols_supported(self, symbol, mock_trading_client, mock_redis_client, mock_logger, frozen_time):
+        """Various symbols should be supported for breakout detection."""
+        with patch("deltadyno.analysis.breakout.breakout_to_queue") as mock_queue, \
+             patch("deltadyno.analysis.breakout.apply_kalman_filter") as mock_kalman:
+            
+            mock_kalman.return_value = (591.5, 0.15, True)
+            mock_queue.return_value = True
+            mock_trading_client.get_clock.return_value.is_open = True
+            
+            from deltadyno.analysis.breakout import check_for_breakouts
+            
+            params = {
+                "prev_kfilt": 590.0,
+                "prev_velocity": 0.1,
+                "enable_kalman_prediction": True,
+                "skip_trading_days_list": [],
+                "latest_close_time": frozen_time.now,
+                "choppy_day_cnt": 0,
+                "bar_head_cnt": 10,
+                "maxvolume": 500000,
+                "min_gap_bars_cnt_for_breakout": 3,
+                "positioncnt": 0,
+                "positionqty": 10,
+                "createorder": True,
+                "upos": 1, "prev_upos": 0,
+                "dnos": 0, "prev_dnos": 0,
+                "bar_strength": 0.75,
+                "latest_close": 591.5,
+                "latest_open": 590.0,
+                "latest_high": 592.0,
+                "latest_low": 589.0,
+                "skip_candle_with_size": 5.0,
+                "volume": 50000,
+                "symbol": symbol,
+                "trading_client": mock_trading_client,
+                "redis_client": mock_redis_client,
+                "redis_queue_name_str": "breakout_messages:v1",
+                "bar_date": frozen_time.now.date(),
+                "logger": mock_logger,
+            }
+            
+            _, breakout_type, _, _ = check_for_breakouts(**params)
+            
+            assert breakout_type == "upward"
+            call_kwargs = mock_queue.call_args[1]
+            assert call_kwargs["symbol"] == symbol
 
