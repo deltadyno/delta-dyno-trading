@@ -8,24 +8,11 @@ Provides:
 - Database configuration mocks
 """
 
-import asyncio
 from datetime import datetime, timezone, timedelta, time as datetime_time
 from typing import Any, Dict, List, Optional
 from unittest.mock import MagicMock, AsyncMock, patch
 from uuid import uuid4
 import pytest
-
-
-# =============================================================================
-# Async Event Loop
-# =============================================================================
-
-@pytest.fixture(scope="session")
-def event_loop():
-    """Create event loop for async tests."""
-    loop = asyncio.get_event_loop_policy().new_event_loop()
-    yield loop
-    loop.close()
 
 
 # =============================================================================

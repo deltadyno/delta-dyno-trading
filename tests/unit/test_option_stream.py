@@ -10,10 +10,16 @@ Tests cover:
 - Queue/Redis lag scenarios
 """
 
+import asyncio
 from datetime import datetime, timezone
 from queue import Queue
 from unittest.mock import MagicMock, AsyncMock, patch
 import pytest
+
+
+def run_async(coro):
+    """Helper to run async functions in sync tests."""
+    return asyncio.get_event_loop().run_until_complete(coro)
 
 
 # =============================================================================
@@ -97,8 +103,7 @@ class TestOptionTradeProcessing:
     """Tests for option trade event processing."""
     
     @pytest.mark.unit
-    @pytest.mark.asyncio
-    async def test_high_premium_trade_processed(self, option_trade_factory):
+    def test_high_premium_trade_processed(self, option_trade_factory):
         """High premium trade should be processed and queued."""
         with patch("deltadyno.options.stream_handler.write_to_db") as mock_write, \
              patch("deltadyno.options.stream_handler._premium_threshold", 500):
@@ -108,13 +113,12 @@ class TestOptionTradeProcessing:
             # Premium = 10.0 * 10 * 100 = 10,000 (above 500 threshold)
             trade = option_trade_factory.create_high_premium_trade()
             
-            await option_trade_handler(trade)
+            run_async(option_trade_handler(trade))
             
             mock_write.assert_called_once()
     
     @pytest.mark.unit
-    @pytest.mark.asyncio
-    async def test_low_premium_trade_ignored(self, option_trade_factory):
+    def test_low_premium_trade_ignored(self, option_trade_factory):
         """Low premium trade should be ignored."""
         with patch("deltadyno.options.stream_handler.write_to_db") as mock_write, \
              patch("deltadyno.options.stream_handler._premium_threshold", 500):
@@ -124,7 +128,7 @@ class TestOptionTradeProcessing:
             # Premium = 0.05 * 1 * 100 = 5 (below 500 threshold)
             trade = option_trade_factory.create_low_premium_trade()
             
-            await option_trade_handler(trade)
+            run_async(option_trade_handler(trade))
             
             mock_write.assert_not_called()
     
@@ -292,8 +296,7 @@ class TestMalformedMessageHandling:
     """Tests for handling malformed messages."""
     
     @pytest.mark.unit
-    @pytest.mark.asyncio
-    async def test_none_price_handled(self):
+    def test_none_price_handled(self):
         """None price should be handled gracefully."""
         from deltadyno.options.stream_handler import option_trade_handler
         
@@ -304,11 +307,10 @@ class TestMalformedMessageHandling:
         trade.timestamp = datetime.now(timezone.utc)
         
         # Should not raise
-        await option_trade_handler(trade)
+        run_async(option_trade_handler(trade))
     
     @pytest.mark.unit
-    @pytest.mark.asyncio
-    async def test_none_size_handled(self):
+    def test_none_size_handled(self):
         """None size should be handled gracefully."""
         from deltadyno.options.stream_handler import option_trade_handler
         
@@ -319,11 +321,10 @@ class TestMalformedMessageHandling:
         trade.timestamp = datetime.now(timezone.utc)
         
         # Should not raise
-        await option_trade_handler(trade)
+        run_async(option_trade_handler(trade))
     
     @pytest.mark.unit
-    @pytest.mark.asyncio
-    async def test_none_timestamp_uses_current_time(self, option_trade_factory):
+    def test_none_timestamp_uses_current_time(self, option_trade_factory):
         """None timestamp should use current time."""
         with patch("deltadyno.options.stream_handler.write_to_db") as mock_write, \
              patch("deltadyno.options.stream_handler._premium_threshold", 0):
@@ -333,7 +334,7 @@ class TestMalformedMessageHandling:
             trade = option_trade_factory.create_trade(price=5.0, size=10)
             trade.timestamp = None
             
-            await option_trade_handler(trade)
+            run_async(option_trade_handler(trade))
             
             mock_write.assert_called_once()
 
@@ -390,8 +391,7 @@ class TestHighFrequencyBursts:
         assert buffer.qsize() == 1000
     
     @pytest.mark.unit
-    @pytest.mark.asyncio
-    async def test_rapid_trades_processed_sequentially(self, option_trade_factory):
+    def test_rapid_trades_processed_sequentially(self, option_trade_factory):
         """Rapid trades should be processed in order."""
         processed_order = []
         
@@ -411,7 +411,7 @@ class TestHighFrequencyBursts:
                     price=1.0,
                     size=10
                 )
-                await option_trade_handler(trade)
+                run_async(option_trade_handler(trade))
         
         assert len(processed_order) == 5
         # Verify sequential processing
@@ -423,8 +423,7 @@ class TestStreamReconnection:
     """Tests for stream disconnect and reconnect handling."""
     
     @pytest.mark.unit
-    @pytest.mark.asyncio
-    async def test_stream_error_logged(self):
+    def test_stream_error_logged(self):
         """Stream errors should be logged."""
         with patch("deltadyno.options.stream_handler._option_stream") as mock_stream, \
              patch("deltadyno.options.stream_handler.logger") as mock_logger:
@@ -436,7 +435,7 @@ class TestStreamReconnection:
             from deltadyno.options.stream_handler import run_stream
             
             try:
-                await run_stream()
+                run_async(run_stream())
             except Exception:
                 pass
             
