@@ -86,7 +86,7 @@ class TestTrailingStopLoss:
         assert "SPY250124C00595000" in previous_plpc
         assert previous_plpc["SPY250124C00595000"] == 0.15
         # trailing_stop = 0.15 - 0.10 = 0.05
-        assert trailing_stops["SPY250124C00595000"] == 0.05
+        assert trailing_stops["SPY250124C00595000"] == pytest.approx(0.05)
 
 
 class TestSellQuantityDetermination:
@@ -294,8 +294,8 @@ class TestSleepTimeCalculation:
     
     @pytest.mark.unit
     def test_before_market_sleeps_until_open(self, mock_db_config, mock_logger):
-        """Before market, sleep until open."""
-        from deltadyno.trading.equity_monitor import calculate_sleep_time
+        """Before market, sleep until open (capped at MAX_SLEEP_SECONDS)."""
+        from deltadyno.trading.equity_monitor import calculate_sleep_time, MAX_SLEEP_SECONDS
         
         now = datetime.now(timezone.utc)
         market_hours = {
@@ -305,7 +305,8 @@ class TestSleepTimeCalculation:
         
         sleep_time = calculate_sleep_time(market_hours, mock_db_config, mock_logger)
         
-        assert 3500 < sleep_time < 3700  # Approximately 1 hour
+        # Sleep time is capped at MAX_SLEEP_SECONDS (1800)
+        assert sleep_time == MAX_SLEEP_SECONDS
     
     @pytest.mark.unit
     def test_after_market_respects_max(self, mock_db_config, mock_logger):

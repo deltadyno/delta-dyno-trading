@@ -465,8 +465,8 @@ class TestSleepTimeCalculation:
     
     @pytest.mark.unit
     def test_before_market_open_sleeps_until_open(self, mock_db_config, mock_logger):
-        """Before market open, should sleep until market opens."""
-        from deltadyno.trading.order_monitor import calculate_sleep_time
+        """Before market open, should sleep until market opens (capped at MAX)."""
+        from deltadyno.trading.order_monitor import calculate_sleep_time, MAX_SLEEP_SECONDS
         
         now = datetime.now(timezone.utc)
         market_hours = {
@@ -476,8 +476,8 @@ class TestSleepTimeCalculation:
         
         sleep_time = calculate_sleep_time(market_hours, mock_db_config, mock_logger)
         
-        # Should be approximately 1 hour (3600 seconds)
-        assert 3500 < sleep_time < 3700
+        # Sleep time is capped at MAX_SLEEP_SECONDS (1800)
+        assert sleep_time == MAX_SLEEP_SECONDS
     
     @pytest.mark.unit
     def test_after_market_close_respects_max_sleep(self, mock_db_config, mock_logger):

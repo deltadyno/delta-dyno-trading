@@ -360,7 +360,7 @@ class TestSystemRestartWithOpenPositions:
         
         # Trailing stop = current profit - stop loss adjustment
         trailing_stop = 0.15 - stop_loss
-        assert trailing_stop == 0.05
+        assert trailing_stop == pytest.approx(0.05)
 
 
 class TestRaceConditions:

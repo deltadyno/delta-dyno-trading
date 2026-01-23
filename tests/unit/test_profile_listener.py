@@ -308,7 +308,6 @@ class TestConstraintChecking:
         """Trading within allowed time window should pass."""
         from deltadyno.trading.constraints import check_constraints
         from datetime import time as datetime_time
-        import pytz
         
         result = check_constraints(
             timezone_str="US/Eastern",
@@ -318,7 +317,7 @@ class TestConstraintChecking:
             skip_candle_with_size=5.0,
             volume=50000,
             max_volume_threshold=100000,
-            open_position_count=3,
+            open_position_cnt=3,
             max_daily_positions_allowed=10,
             bar_date=datetime(2025, 1, 23, 14, 30, tzinfo=timezone.utc),
             skip_trading_days_list=[],
@@ -341,7 +340,7 @@ class TestConstraintChecking:
             skip_candle_with_size=5.0,
             volume=50000,
             max_volume_threshold=100000,
-            open_position_count=3,
+            open_position_cnt=3,
             max_daily_positions_allowed=10,
             bar_date=datetime(2025, 1, 23, 14, 30, tzinfo=timezone.utc),
             skip_trading_days_list=[],
@@ -364,7 +363,7 @@ class TestConstraintChecking:
             skip_candle_with_size=5.0,
             volume=200000,  # Exceeds limit
             max_volume_threshold=100000,
-            open_position_count=3,
+            open_position_cnt=3,
             max_daily_positions_allowed=10,
             bar_date=datetime(2025, 1, 23, 14, 30, tzinfo=timezone.utc),
             skip_trading_days_list=[],
@@ -387,7 +386,7 @@ class TestConstraintChecking:
             skip_candle_with_size=5.0,
             volume=50000,
             max_volume_threshold=100000,
-            open_position_count=10,  # At limit
+            open_position_cnt=10,  # At limit
             max_daily_positions_allowed=10,
             bar_date=datetime(2025, 1, 23, 14, 30, tzinfo=timezone.utc),
             skip_trading_days_list=[],
